@@ -68,3 +68,21 @@ h2 { margin: 0; font-size: 22px; }
 .touch-right button:last-child { min-width: 90px; background: rgba(255, 51, 75, .55); }
 @media (hover: none), (max-width: 900px) { .touch-controls { display: flex; } .topbar { top: max(6px, env(safe-area-inset-top)); } .pill { padding: 9px 11px; } }
 @media (max-width: 760px) { .hero, .section-title, .row-card, .controls-card { display: grid; grid-template-columns: 1fr; align-items: stretch; } .save-line { min-width: 0; } .cars-grid, .tracks-grid { grid-template-columns: 1fr; } .menu-panel { padding: 12px 10px 110px; } .menu-card { border-radius: 18px; padding: 12px; } }
+
+/* v5 visual fixes */
+.car-card { grid-template-columns: 96px 1fr; min-height: 158px; }
+.car-card img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  padding: 6px;
+  border-radius: 16px;
+  background: radial-gradient(circle at 50% 38%, rgba(255,255,255,.18), rgba(255,255,255,.04) 58%, rgba(0,0,0,.12));
+  border: 1px solid rgba(255,255,255,.13);
+}
+.card-action { font-size: 11px; }
+.track-card { background-color: rgba(0,0,0,.22); }
+@media (max-width: 760px) {
+  .car-card { grid-template-columns: 86px 1fr; min-height: 148px; }
+  .car-card img { width: 86px; height: 86px; }
+}

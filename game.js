@@ -238,7 +238,10 @@
     lastSegmentIndex: 0,
     curveVisual: 0,
     skidTimer: 0,
-    messageTimer: 0
+    messageTimer: 0,
+    steerState: 0,
+    speedFx: 0,
+    visualRoadBoost: 1.75
   };
 
   function selectedCar() { return CARS.find(c => c.id === save.selectedCar) || CARS[0]; }
@@ -353,6 +356,8 @@
     game.lastSegmentIndex = 0;
     game.curveVisual = 0;
     game.skidTimer = 0;
+    game.steerState = 0;
+    game.speedFx = 0;
     buildCoins();
     buildTraffic();
     menu.classList.add('hidden');
@@ -451,18 +456,23 @@
     if (hardOff) acc -= 28 + Math.abs(game.x) * 18;
     game.speed = clamp(game.speed + acc * dt, 0, car.max * (offroad ? .58 : 1));
 
-    const steerInput = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
-    const steeringLive = game.speed > 2 ? (0.38 + speedPct * 1.45) : .15;
-    const steerPower = car.handling * steeringLive / Math.sqrt(car.mass);
-    const driftBonus = controls.handbrake ? (1.8 + car.drift) : (1.0 + car.drift * .18);
-    const curvePush = seg.curve * track.curveForce * (0.55 + speedPct * 2.2) * speedPct;
+    const rawSteer = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
+    // Важное отличие от прошлой версии: руль сглажен. Машина больше не дергается
+    // мгновенно в сторону, а постепенно набирает боковую скорость как в старых аркадных гонках.
+    const steerFollow = rawSteer ? 5.2 : 7.8;
+    game.steerState = lerp(game.steerState || 0, rawSteer, 1 - Math.exp(-dt * steerFollow));
+    const highSpeedSteerLoss = lerp(1.08, .56, clamp(speedPct, 0, 1));
+    const steeringLive = game.speed > 2 ? (0.40 + speedPct * .88) : .12;
+    const steerPower = car.handling * steeringLive * highSpeedSteerLoss / Math.sqrt(car.mass);
+    const driftBonus = controls.handbrake ? (1.55 + car.drift * .85) : (0.82 + car.drift * .10);
+    const curvePush = seg.curve * track.curveForce * (0.42 + speedPct * 1.75) * speedPct;
 
-    game.dx += steerInput * steerPower * dt * driftBonus;
+    game.dx += game.steerState * steerPower * dt * driftBonus;
     game.dx -= curvePush * dt;
-    const damping = Math.exp(-dt * (2.7 + traction * 2.8));
+    const damping = Math.exp(-dt * (3.45 + traction * 3.1));
     game.dx *= damping;
-    if (offroad) game.dx *= Math.exp(-dt * 2.2);
-    game.x += game.dx * dt * (0.9 + speedPct * 2.8);
+    if (offroad) game.dx *= Math.exp(-dt * 2.8);
+    game.x += game.dx * dt * (0.78 + speedPct * 1.85);
     if (Math.abs(game.x) > 1.64) {
       game.x = sign(game.x) * 1.64;
       game.dx *= -.18;
@@ -471,16 +481,19 @@
       if (Math.random() < dt * 3) playSound('scrape', .25);
     }
 
-    const slip = Math.abs(game.dx) * speedPct + Math.abs(steerInput) * speedPct * (controls.handbrake ? .8 : .25) + (offroad ? .25 : 0);
+    const slip = Math.abs(game.dx) * speedPct + Math.abs(rawSteer) * speedPct * (controls.handbrake ? .8 : .25) + (offroad ? .25 : 0);
     if (slip > .42 && game.speed > 45) {
       game.skidTimer -= dt;
       if (game.skidTimer <= 0) { playSound('skid', .18); game.skidTimer = .62; }
     }
 
-    game.steerLean = lerp(game.steerLean, steerInput * .9 + game.dx * 1.9, 1 - Math.exp(-dt * 8));
+    const steerInput = game.steerState || 0;
+    game.steerLean = lerp(game.steerLean, steerInput * .58 + game.dx * 1.35, 1 - Math.exp(-dt * 6.5));
     game.curveVisual = lerp(game.curveVisual, seg.curve, 1 - Math.exp(-dt * 3));
-    game.pos += game.speed * dt;
-    game.totalMeters += game.speed * dt;
+    const arcadeSpeedBoost = 1.55 + clamp(game.speed / Math.max(1, car.max), 0, 1) * .55;
+    game.pos += game.speed * dt * arcadeSpeedBoost;
+    game.totalMeters += game.speed * dt * 1.18;
+    game.speedFx = lerp(game.speedFx || 0, clamp(game.speed / car.max, 0, 1), 1 - Math.exp(-dt * 5));
     game.raceTime += dt;
     game.cameraShake = Math.max(0, game.cameraShake - dt * 1.6);
 
@@ -550,34 +563,35 @@
 
   function rowGeom(i, visible, curveOffset = 0) {
     const t = clamp(i / visible, 0, 1);
-    const p = Math.pow(t, 1.72);
+    const p = Math.pow(t, 1.78);
     const y = horizon + (roadBottom - horizon) * p;
-    const width = lerp(22 * DPR, W * .94, Math.pow(t, 1.15));
-    const center = W / 2 + curveOffset * width * .62 - game.x * width * .38;
+    const width = lerp(16 * DPR, W * 1.18, Math.pow(t, 1.08));
+    const center = W / 2 + curveOffset * width * .66 - game.x * width * .34;
     return { t, p, y, width, center };
   }
 
   function buildRoadCache() {
-    const visible = Math.max(84, Math.floor(120 + game.speed * .24));
+    // Больше рядов + меньший шаг = менее заметная «лесенка» и лучше ощущение скорости.
+    const visible = Math.max(118, Math.floor(132 + game.speed * .32));
     const rows = [];
     let curveSpeed = 0;
     let curveOffset = 0;
-    const step = game.track.segLen * .95;
+    const step = game.track.segLen * .58;
     for (let i = 0; i <= visible; i++) {
       const dist = game.pos + i * step;
       const seg = getSegmentAt(game.track, dist);
-      curveSpeed += seg.curve * .017;
+      curveSpeed += seg.curve * .0135;
       curveOffset += curveSpeed;
       const g = rowGeom(i, visible, curveOffset);
-      rows.push({ ...g, seg, dist, curveOffset });
+      rows.push({ ...g, seg, dist, curveOffset, step });
     }
     return rows;
   }
 
   function render() {
     ctx.imageSmoothingEnabled = false;
-    const shakeX = game.cameraShake ? rand(-4, 4) * DPR * game.cameraShake : 0;
-    const shakeY = game.cameraShake ? rand(-3, 3) * DPR * game.cameraShake : 0;
+    const shakeX = game.cameraShake ? rand(-2.2, 2.2) * DPR * game.cameraShake : 0;
+    const shakeY = game.cameraShake ? rand(-1.6, 1.6) * DPR * game.cameraShake : 0;
     ctx.save();
     ctx.translate(shakeX, shakeY);
     const track = game.track || selectedTrack();
@@ -727,42 +741,69 @@
 
   function drawRoad(rows, track) {
     const pal = track.palette;
+    // Фон травы уже нарисован в drawSky. Здесь рисуем только полотно дороги,
+    // чтобы не было случайного горизонтального «полосения» по всему экрану.
     for (let i = rows.length - 2; i >= 0; i--) {
       const near = rows[i + 1];
       const far = rows[i];
-      const strip = Math.floor((game.pos / track.segLen + i) / 3) % 2;
-      const grass = strip ? paletteGrass(track, 0) : paletteGrass(track, 1);
-      ctx.fillStyle = grass;
-      ctx.fillRect(0, far.y, W, near.y - far.y + 1);
+      const strip = Math.floor((far.dist / track.segLen) / 3) % 2;
+      const fy = Math.floor(far.y);
+      const ny = Math.ceil(near.y) + 1;
+      const shoulderWFar = far.width * .062;
+      const shoulderWNear = near.width * .062;
+      const roadFar = far.width * .50;
+      const roadNear = near.width * .50;
 
-      const shoulderWFar = far.width * .065;
-      const shoulderWNear = near.width * .065;
-      const roadFar = far.width * .48;
-      const roadNear = near.width * .48;
+      // Обочина/бордюр. Рисуется с небольшим перехлестом, чтобы в браузере не появлялись микротрещины.
+      drawQuad(far.center - roadFar - shoulderWFar, fy, far.center - roadFar + 1, fy, near.center - roadNear + 1, ny, near.center - roadNear - shoulderWNear, ny, strip ? '#d82a1d' : '#f4f4f4');
+      drawQuad(far.center + roadFar - 1, fy, far.center + roadFar + shoulderWFar, fy, near.center + roadNear + shoulderWNear, ny, near.center + roadNear - 1, ny, strip ? '#f4f4f4' : '#d82a1d');
 
-      drawQuad(far.center - roadFar - shoulderWFar, far.y, far.center - roadFar, far.y, near.center - roadNear, near.y, near.center - roadNear - shoulderWNear, near.y, strip ? '#d22218' : '#fff');
-      drawQuad(far.center + roadFar, far.y, far.center + roadFar + shoulderWFar, far.y, near.center + roadNear + shoulderWNear, near.y, near.center + roadNear, near.y, strip ? '#fff' : '#d22218');
+      // Асфальт почти без полос: только слабая разница рядов, иначе на Retina появлялось мерцание.
+      drawQuad(far.center - roadFar, fy, far.center + roadFar, fy, near.center + roadNear, ny, near.center - roadNear, ny, paletteRoad(track, strip));
 
-      drawQuad(far.center - roadFar, far.y, far.center + roadFar, far.y, near.center + roadNear, near.y, near.center - roadNear, near.y, strip ? paletteRoad(track, 0) : paletteRoad(track, 1));
-
-      if (far.seg.lane) {
-        const laneWFar = Math.max(2 * DPR, far.width * .012);
-        const laneWNear = Math.max(4 * DPR, near.width * .012);
-        for (const l of [-.25, .25]) {
-          drawQuad(
-            far.center + l * roadFar * 2 - laneWFar, far.y,
-            far.center + l * roadFar * 2 + laneWFar, far.y,
-            near.center + l * roadNear * 2 + laneWNear, near.y,
-            near.center + l * roadNear * 2 - laneWNear, near.y,
-            'rgba(255,255,255,.85)'
-          );
+      // Белые «летящие» штрихи разметки дают ощущение скорости.
+      const dashOn = (Math.floor((far.dist + game.pos * .08) / 34) % 3) === 0;
+      if (dashOn && i > 8) {
+        const laneWFar = Math.max(2 * DPR, far.width * .010);
+        const laneWNear = Math.max(3 * DPR, near.width * .012);
+        for (const l of [-.33, 0, .33]) {
+          const lf = far.center + l * roadFar * 2;
+          const ln = near.center + l * roadNear * 2;
+          drawQuad(lf - laneWFar, fy, lf + laneWFar, fy, ln + laneWNear, ny, ln - laneWNear, ny, 'rgba(255,255,255,.86)');
         }
       }
-      if (i % 18 === 0) {
-        ctx.fillStyle = pal === 'night' ? 'rgba(110,190,255,.26)' : 'rgba(255,255,255,.22)';
-        drawQuad(far.center - roadFar*.96, far.y, far.center + roadFar*.96, far.y, near.center + roadNear*.96, near.y, near.center - roadNear*.96, near.y, ctx.fillStyle);
+
+      // Дополнительные серые штрихи на ближней части дороги: поток выглядит быстрее, но не полосит весь экран.
+      if (i < rows.length * .38 && (Math.floor((far.dist + game.pos) / 18) % 4 === 0)) {
+        ctx.fillStyle = pal === 'night' ? 'rgba(170,205,255,.14)' : 'rgba(255,255,255,.18)';
+        const side = Math.sin(far.dist * .07) > 0 ? -1 : 1;
+        const x1 = near.center + side * roadNear * (.18 + (i % 7) * .07);
+        ctx.fillRect(x1, ny - 2 * DPR, Math.max(28 * DPR, near.width * .08), Math.max(1, 2 * DPR));
       }
     }
+    drawSpeedLines();
+  }
+
+  function drawSpeedLines() {
+    const fx = game.speedFx || 0;
+    if (fx < .30) return;
+    const count = Math.floor(10 + fx * 28);
+    ctx.save();
+    ctx.globalAlpha = clamp((fx - .25) * .55, 0, .36);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1, 2 * DPR);
+    for (let i = 0; i < count; i++) {
+      const seed = (i * 997 + Math.floor(game.pos * .7)) % 997;
+      const x = (seed / 997) * W;
+      const y = roadBottom - ((seed * 37) % Math.max(1, (roadBottom - horizon))) * .55;
+      if (y < horizon + 40 * DPR || y > roadBottom - 8 * DPR) continue;
+      const len = (26 + fx * 95) * DPR * (0.5 + (seed % 10) / 10);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - len * .7, y + len * .08);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function paletteRoad(track, idx) {
@@ -853,49 +894,58 @@
 
   function drawPlayerCar() {
     const car = game.car || selectedCar();
-    const near = rowGeom(1, 1, 0);
-    const roadW = W * .94 * .48;
-    const carX = W / 2 + game.x * roadW * .62;
-    const carY = roadBottom - 37 * DPR;
-    const sc = clamp(W / 1280, .68, 1.3) * DPR;
+    const roadW = W * 1.18 * .50;
+    const carX = W / 2 + game.x * roadW * .52;
+    const carY = roadBottom - 34 * DPR;
+    const sc = clamp(W / 1280, .72, 1.22) * DPR;
     ctx.save();
     ctx.translate(carX, carY);
-    ctx.rotate(clamp(game.steerLean, -1.2, 1.2) * .14);
+    // Визуальный наклон тоже сглажен, чтобы машина не дергалась при каждом нажатии.
+    ctx.rotate(clamp(game.steerLean, -1.1, 1.1) * .085);
     ctx.scale(sc, sc);
-    // shadow
     ctx.fillStyle = 'rgba(0,0,0,.48)';
-    ctx.fillRect(-48, 22, 96, 12);
-    // rear tires
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(-54, -4, 18, 34);
-    ctx.fillRect(36, -4, 18, 34);
-    ctx.fillRect(-44, -18, 14, 23);
-    ctx.fillRect(30, -18, 14, 23);
-    // body outline
-    ctx.fillStyle = '#0b0d11';
-    ctx.fillRect(-41, -28, 82, 57);
-    ctx.fillStyle = car.color;
-    ctx.fillRect(-36, -25, 72, 49);
-    ctx.fillRect(-28, -39, 56, 20);
-    ctx.fillStyle = shade(car.color, -38);
-    ctx.fillRect(-30, 6, 60, 18);
-    ctx.fillStyle = shade(car.color, 28);
-    ctx.fillRect(-25, -35, 50, 11);
-    // windows/lights
-    ctx.fillStyle = '#101823';
-    ctx.fillRect(-19, -33, 38, 10);
-    ctx.fillStyle = '#f5e9c0';
-    ctx.fillRect(-33, 13, 14, 6);
-    ctx.fillRect(19, 13, 14, 6);
-    ctx.fillStyle = '#ff263c';
-    ctx.fillRect(-38, -18, 6, 13);
-    ctx.fillRect(32, -18, 6, 13);
-    // steering indicator pixels
-    if (controls.left || controls.right) {
-      ctx.fillStyle = controls.left ? '#ffd338' : '#33e081';
-      ctx.fillRect((controls.left ? -58 : 50), -36, 8, 20);
-    }
+    ctx.fillRect(-58, 23, 116, 13);
+    drawRearCarSprite(car);
     ctx.restore();
+  }
+
+  function drawRearCarSprite(car) {
+    // Ретро-спрайт заднего вида, но с цветом/пропорциями выбранной машины.
+    const wide = car.mass > 1.2 || car.id === 'raptor';
+    const low = car.id === 'slingshot' || car.id === 'viper' || car.id === 'roadster';
+    const bodyW = wide ? 100 : 86;
+    const bodyH = low ? 44 : 52;
+    const roofW = wide ? 62 : 54;
+    const roofH = low ? 18 : 22;
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(-bodyW/2 - 12, -3, 18, 37);
+    ctx.fillRect(bodyW/2 - 6, -3, 18, 37);
+    ctx.fillRect(-bodyW/2 + 7, -24, 13, 25);
+    ctx.fillRect(bodyW/2 - 20, -24, 13, 25);
+    ctx.fillStyle = '#0b0d11';
+    ctx.fillRect(-bodyW/2 - 3, -bodyH + 4, bodyW + 6, bodyH + 28);
+    ctx.fillStyle = car.color;
+    ctx.fillRect(-bodyW/2, -bodyH, bodyW, bodyH + 24);
+    ctx.fillStyle = shade(car.color, 34);
+    ctx.fillRect(-roofW/2, -bodyH - roofH + 7, roofW, roofH);
+    ctx.fillStyle = '#111b25';
+    ctx.fillRect(-roofW/2 + 8, -bodyH - roofH + 10, roofW - 16, 10);
+    ctx.fillStyle = shade(car.color, -42);
+    ctx.fillRect(-bodyW/2 + 8, -12, bodyW - 16, 19);
+    ctx.fillStyle = '#eaf7ff';
+    ctx.fillRect(-bodyW/2 + 10, 8, 17, 7);
+    ctx.fillRect(bodyW/2 - 27, 8, 17, 7);
+    ctx.fillStyle = '#ff263c';
+    ctx.fillRect(-bodyW/2 + 4, -29, 8, 15);
+    ctx.fillRect(bodyW/2 - 12, -29, 8, 15);
+    ctx.fillStyle = '#070707';
+    ctx.fillRect(-20, 18, 40, 7);
+    ctx.fillStyle = '#dfe8ef';
+    for (let i = 0; i < 4; i++) ctx.fillRect(-16 + i*9, 19, 5, 5);
+    if (controls.left || controls.right) {
+      ctx.fillStyle = '#ffd338';
+      ctx.fillRect(controls.left ? -bodyW/2 - 25 : bodyW/2 + 15, -32, 9, 19);
+    }
   }
 
   function shade(hex, amt) {
@@ -922,8 +972,8 @@
     drawBar(leftX, y + 125 * DPR, 270 * DPR, 12 * DPR, game.damage, '#ff3241', 'DAMAGE');
 
     const gaugeSize = clamp(112 * DPR, 90 * DPR, hudH * .86);
-    drawGauge(W * .34, y + hudH * .55, gaugeSize, game.rpm, 'TACH');
-    drawGauge(W * .53, y + hudH * .55, gaugeSize, clamp(game.speed / game.car.max, 0, 1), 'MPH/KMH');
+    drawGauge(W * .36, y + hudH * .58, gaugeSize * .86, game.rpm, 'TACH');
+    drawGauge(W * .55, y + hudH * .58, gaugeSize * .86, clamp(game.speed / game.car.max, 0, 1), 'MPH/KMH');
 
     drawPixelText('LAP', W * .44, y + 34 * DPR, 14 * DPR, '#fff');
     drawPixelText(`${Math.min(game.lap, game.track.laps)}/${game.track.laps}`, W * .49, y + 34 * DPR, 19 * DPR, '#50ff8d');
