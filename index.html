@@ -1,123 +1,81 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#050712" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="Retro Turbo" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Retro Turbo GP — GitHub Pages Racing</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="icon" href="icon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="icon.svg" />
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#55a9f5">
+  <title>Retro Grand Prix 8-bit</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app-shell">
-    <canvas id="gameCanvas" width="1280" height="720" aria-label="Retro racing game canvas"></canvas>
+  <canvas id="game" width="480" height="270" aria-label="Retro Grand Prix 8-bit"></canvas>
 
-    <section id="menu" class="panel active" aria-live="polite">
-      <div class="menu-header">
+  <div class="top-actions">
+    <button id="pauseBtn" class="pill">Пауза</button>
+    <button id="menuBtn" class="pill">Меню</button>
+  </div>
+
+  <div id="menu" class="overlay open">
+    <section class="panel">
+      <div class="hero">
         <div>
-          <p class="eyebrow">Pixel road • local save • no database</p>
-          <h1>Retro Turbo GP</h1>
-          <p class="lead">Псевдо‑3D гонка для GitHub Pages: машины покупаются за монеты, прогресс хранится в браузере.</p>
+          <p class="kicker">GitHub Pages • localStorage • без серверов</p>
+          <h1>RETRO GRAND PRIX</h1>
+          <p class="lead">Псевдо-3D гонка в духе 8/16-bit: машина рулится относительно трассы, дорога уходит в перспективу, повороты имеют центробежную силу, а разные авто реально отличаются поведением.</p>
         </div>
-        <div class="wallet-card">
+        <div class="wallet">
           <span>Монеты</span>
-          <strong id="coinBalance">0</strong>
-          <small>локально в localStorage</small>
+          <b id="walletCoins">0</b>
         </div>
       </div>
 
-      <div class="grid-2">
-        <div class="section-card">
-          <div class="section-title">
-            <h2>Авто</h2>
-            <button id="openGarage" class="ghost-btn">Гараж</button>
-          </div>
-          <div id="carGrid" class="card-grid"></div>
+      <div class="grid two">
+        <div class="block">
+          <h2>Авто</h2>
+          <div id="cars" class="cards"></div>
         </div>
-
-        <div class="section-card">
-          <div class="section-title">
-            <h2>Трасса</h2>
-            <button id="randomTrack" class="ghost-btn">Случайно</button>
-          </div>
-          <div id="trackGrid" class="card-grid"></div>
-        </div>
-      </div>
-
-      <div class="bottom-row">
-        <div class="section-card difficulty-card">
+        <div class="block">
+          <h2>Трасса</h2>
+          <div id="tracks" class="cards compact"></div>
           <h2>Сложность</h2>
-          <div id="difficultyGrid" class="difficulty-grid"></div>
-        </div>
-        <div class="actions-card">
-          <button id="startRace" class="primary-btn">Старт гонки</button>
-          <button id="resetProgress" class="danger-btn">Сбросить прогресс</button>
-          <button id="installInfo" class="ghost-btn">Как запустить на iPhone</button>
-          <p class="controls-help">Управление: <b>WASD</b> или <b>стрелки</b>. Газ/тормоз/руль. <b>P</b> — пауза, <b>R</b> — рестарт.</p>
+          <div id="difficulties" class="cards compact"></div>
         </div>
       </div>
-    </section>
 
-    <section id="garagePanel" class="panel small-panel" aria-live="polite">
-      <div class="modal-card">
-        <div class="section-title">
-          <h2>Гараж и магазин</h2>
-          <button id="closeGarage" class="ghost-btn">Закрыть</button>
-        </div>
-        <p class="lead small">Каждая машина отличается максималкой, разгоном, сцеплением и поведением в повороте. Купленные авто сохраняются локально.</p>
-        <div id="garageGrid" class="garage-grid"></div>
+      <div class="controls-help">
+        <b>Управление:</b> WASD / стрелки. W/↑ — газ, S/↓ — тормоз, A/D или ←/→ — руль. На телефоне появятся кнопки управления.
+      </div>
+
+      <div class="start-row">
+        <button id="startBtn" class="start">Старт гонки</button>
+        <button id="resetBtn" class="ghost">Сбросить прогресс</button>
       </div>
     </section>
+  </div>
 
-    <section id="raceOverlay" class="race-overlay hidden">
-      <button id="pauseBtn" class="hud-btn">Пауза</button>
-      <button id="menuBtn" class="hud-btn">Меню</button>
+  <div id="finish" class="overlay">
+    <section class="panel small">
+      <h1 id="finishTitle">Финиш</h1>
+      <p id="finishText"></p>
+      <button id="finishMenu" class="start">В меню</button>
     </section>
+  </div>
 
-    <section id="messagePanel" class="panel message-panel" aria-live="polite">
-      <div class="modal-card center">
-        <p id="messageKicker" class="eyebrow">Гонка завершена</p>
-        <h2 id="messageTitle">Финиш</h2>
-        <p id="messageText" class="lead"></p>
-        <div class="message-actions">
-          <button id="againBtn" class="primary-btn">Ещё раз</button>
-          <button id="toMenuBtn" class="ghost-btn">В меню</button>
-        </div>
-      </div>
-    </section>
-
-    <section id="iosInfo" class="panel small-panel" aria-live="polite">
-      <div class="modal-card">
-        <div class="section-title">
-          <h2>Запуск как приложение</h2>
-          <button id="closeIosInfo" class="ghost-btn">Закрыть</button>
-        </div>
-        <ol class="steps">
-          <li>Открой страницу игры в Safari на iPhone.</li>
-          <li>Нажми кнопку «Поделиться».</li>
-          <li>Выбери «На экран Домой».</li>
-          <li>Запускай игру как обычное приложение. Прогресс останется в браузере.</li>
-        </ol>
-      </div>
-    </section>
-
-    <div id="touchControls" class="touch-controls" aria-hidden="true">
-      <div class="touch-left">
-        <button data-touch="left">◀</button>
-        <button data-touch="right">▶</button>
-      </div>
-      <div class="touch-right">
-        <button data-touch="brake">BRAKE</button>
-        <button data-touch="gas">GAS</button>
-      </div>
-    </div>
+  <div class="touch-controls" aria-hidden="true">
+    <button data-control="left">◀</button>
+    <button data-control="brake">▼</button>
+    <button data-control="gas">▲</button>
+    <button data-control="right">▶</button>
   </div>
 
   <script src="game.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+    }
+  </script>
 </body>
 </html>
