@@ -1,81 +1,82 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#55a9f5">
-  <title>Retro Grand Prix 8-bit</title>
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#070b14" />
+  <title>Q3 Retro Rally HTML</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <canvas id="game" width="480" height="270" aria-label="Retro Grand Prix 8-bit"></canvas>
+  <canvas id="game" tabindex="0" aria-label="Q3 Retro Rally game canvas"></canvas>
 
-  <div class="top-actions">
+  <div class="topbar">
     <button id="pauseBtn" class="pill">Пауза</button>
     <button id="menuBtn" class="pill">Меню</button>
   </div>
 
-  <div id="menu" class="overlay open">
-    <section class="panel">
-      <div class="hero">
-        <div>
-          <p class="kicker">GitHub Pages • localStorage • без серверов</p>
-          <h1>RETRO GRAND PRIX</h1>
-          <p class="lead">Псевдо-3D гонка в духе 8/16-bit: машина рулится относительно трассы, дорога уходит в перспективу, повороты имеют центробежную силу, а разные авто реально отличаются поведением.</p>
-        </div>
-        <div class="wallet">
-          <span>Монеты</span>
-          <b id="walletCoins">0</b>
-        </div>
+  <section id="menu" class="menu-panel">
+    <div class="menu-card hero">
+      <div>
+        <p class="eyebrow">HTML / GitHub Pages / localStorage</p>
+        <h1>Q3 Retro Rally</h1>
+        <p class="lead">Псевдо‑3D гонка в духе Ferrari Grand Prix Challenge + детали из твоего пакета Q3Rally: иконки машин, HUD‑датчики, звуки и превью трасс.</p>
       </div>
-
-      <div class="grid two">
-        <div class="block">
-          <h2>Авто</h2>
-          <div id="cars" class="cards"></div>
-        </div>
-        <div class="block">
-          <h2>Трасса</h2>
-          <div id="tracks" class="cards compact"></div>
-          <h2>Сложность</h2>
-          <div id="difficulties" class="cards compact"></div>
-        </div>
+      <div class="save-line">
+        <span>Монеты: <b id="totalCoins">0</b></span>
+        <span>Одометр: <b id="garageOdo">0.0 км</b></span>
       </div>
+    </div>
 
-      <div class="controls-help">
-        <b>Управление:</b> WASD / стрелки. W/↑ — газ, S/↓ — тормоз, A/D или ←/→ — руль. На телефоне появятся кнопки управления.
+    <div class="menu-card">
+      <div class="section-title">
+        <h2>Авто</h2>
+        <p>Каждая машина отличается массой, сцеплением, разгоном и рулём.</p>
       </div>
+      <div id="cars" class="grid cars-grid"></div>
+    </div>
 
-      <div class="start-row">
-        <button id="startBtn" class="start">Старт гонки</button>
-        <button id="resetBtn" class="ghost">Сбросить прогресс</button>
+    <div class="menu-card">
+      <div class="section-title">
+        <h2>Трасса</h2>
+        <p>У трасс разные повороты, прямые, сцепление и визуал.</p>
       </div>
-    </section>
-  </div>
+      <div id="tracks" class="grid tracks-grid"></div>
+    </div>
 
-  <div id="finish" class="overlay">
-    <section class="panel small">
-      <h1 id="finishTitle">Финиш</h1>
-      <p id="finishText"></p>
-      <button id="finishMenu" class="start">В меню</button>
-    </section>
-  </div>
+    <div class="menu-card row-card">
+      <div class="section-title tight">
+        <h2>Сложность</h2>
+        <p>Влияет на трафик, штрафы за обочину и чувствительность повреждений.</p>
+      </div>
+      <div id="difficulty" class="difficulty"></div>
+    </div>
+
+    <div class="menu-card controls-card">
+      <button id="startBtn" class="start">Старт</button>
+      <button id="resetBtn" class="secondary">Сбросить прогресс</button>
+      <div class="help">
+        <b>Управление:</b> стрелки или WASD. Вперёд — газ, вниз/S — тормоз, влево/вправо — руль, Space — ручник/дрифт, P — пауза. На телефоне — экранные кнопки.
+      </div>
+    </div>
+  </section>
+
+  <div id="raceMessage" class="race-message hidden"></div>
 
   <div class="touch-controls" aria-hidden="true">
-    <button data-control="left">◀</button>
-    <button data-control="brake">▼</button>
-    <button data-control="gas">▲</button>
-    <button data-control="right">▶</button>
+    <div class="touch-left">
+      <button data-touch="left">◀</button>
+      <button data-touch="right">▶</button>
+    </div>
+    <div class="touch-right">
+      <button data-touch="brake">BRAKE</button>
+      <button data-touch="gas">GAS</button>
+    </div>
   </div>
 
   <script src="game.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
-    }
-  </script>
 </body>
 </html>

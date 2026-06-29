@@ -1,11 +1,12 @@
 {
-  "name": "Retro Grand Prix 8-bit",
-  "short_name": "Retro GP",
+  "name": "Q3 Retro Rally HTML",
+  "short_name": "Retro Rally",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#05070a",
-  "theme_color": "#55a9f5",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "orientation": "landscape",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]
 }

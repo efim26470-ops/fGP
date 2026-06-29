@@ -2,858 +2,1064 @@
   'use strict';
 
   const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const menu = document.getElementById('menu');
+  const carsEl = document.getElementById('cars');
+  const tracksEl = document.getElementById('tracks');
+  const diffEl = document.getElementById('difficulty');
+  const startBtn = document.getElementById('startBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const menuBtn = document.getElementById('menuBtn');
+  const totalCoinsEl = document.getElementById('totalCoins');
+  const garageOdoEl = document.getElementById('garageOdo');
+  const raceMessage = document.getElementById('raceMessage');
 
-  const W = 480;
-  const H = 270;
-  const HUD_H = 58;
-  const GAME_H = H - HUD_H;
-
-  const SEGMENT_LENGTH = 80;      // условные метры
-  const ROAD_WIDTH = 2100;
-  const CAMERA_HEIGHT = 960;
-  const CAMERA_DEPTH = 0.72;
-  const DRAW_DISTANCE = 92;
-  const LANES = 3;
-  const STORAGE_KEY = 'retro-grand-prix-v3-save';
-
-  const COLORS = {
-    sky: '#58aaf5',
-    hud: '#080808',
-    white: '#f6f6f6',
-    black: '#050505',
-    red: '#d73522',
-    yellow: '#ffcf33',
-    green: '#21d33b',
-    darkGreen: '#138b33',
-    roadA: '#747474',
-    roadB: '#6a6a6a',
-    lane: '#e4e4e4',
-    rumbleRed: '#c93423',
-    rumbleWhite: '#f6f6f6'
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const sign = (v) => v < 0 ? -1 : 1;
+  const fmtTime = (s) => {
+    s = Math.max(0, s || 0);
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    const cs = Math.floor((s * 100) % 100);
+    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
   };
+
+  const ASSET_LIST = {
+    gauge: 'assets/hud/gauge.png',
+    needle: 'assets/hud/needle.png',
+    hudArrow: 'assets/hud/arrow.png',
+    alpine: 'assets/cars/alpine.png',
+    mini: 'assets/cars/mini.png',
+    roadster: 'assets/cars/roadster.png',
+    camaro: 'assets/cars/camaro.png',
+    viper: 'assets/cars/viper.png',
+    sidepipe: 'assets/cars/sidepipe.png',
+    raptor: 'assets/cars/raptor.png',
+    slingshot: 'assets/cars/slingshot.png',
+    countryShot: 'assets/levelshots/country.jpg',
+    downtownShot: 'assets/levelshots/downtown.jpg',
+    nightShot: 'assets/levelshots/nightcity.jpg',
+    lavaShot: 'assets/levelshots/lavafalls.jpg',
+    valleyShot: 'assets/levelshots/valley.jpg'
+  };
+  const SOUND_LIST = {
+    go: 'assets/audio/go.ogg',
+    checkpoint: 'assets/audio/checkpoint.ogg',
+    skid: 'assets/audio/skid.ogg',
+    scrape: 'assets/audio/scrape.ogg'
+  };
+
+  const images = {};
+  const sounds = {};
+
+  function loadImages() {
+    return Promise.all(Object.entries(ASSET_LIST).map(([k, src]) => new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => { images[k] = img; resolve(); };
+      img.onerror = () => { images[k] = null; resolve(); };
+      img.src = src;
+    })));
+  }
+
+  function loadSounds() {
+    for (const [k, src] of Object.entries(SOUND_LIST)) {
+      const a = new Audio(src);
+      a.preload = 'auto';
+      sounds[k] = a;
+    }
+  }
+
+  function playSound(name, volume = 0.45) {
+    const a = sounds[name];
+    if (!a) return;
+    try {
+      const n = a.cloneNode(true);
+      n.volume = volume;
+      n.play().catch(() => {});
+    } catch (_) {}
+  }
 
   const CARS = [
-    { id: 'starter', name: 'Pixel Hatch', cost: 0, color: '#28c7ff', max: 210, accel: 42, brake: 110, handling: 1.55, grip: 1.00, mass: 1.00, desc: 'Бесплатная машина: легче рулить, но слабая скорость.' },
-    { id: 'turbo', name: 'Turbo Berlinetta', cost: 280, color: '#e3392d', max: 275, accel: 58, brake: 118, handling: 1.68, grip: 1.05, mass: .94, desc: 'Быстрее стартует, держит повороты стабильнее.' },
-    { id: 'formula', name: 'Formula RX', cost: 720, color: '#f2f2f2', max: 318, accel: 70, brake: 132, handling: 2.08, grip: 1.23, mass: .80, desc: 'Болид: резкий руль, лучший темп на извилистых трассах.' },
-    { id: 'v12', name: 'V12 Meteor', cost: 1100, color: '#7d35ff', max: 350, accel: 76, brake: 120, handling: 1.50, grip: .98, mass: 1.25, desc: 'Очень быстрый на прямых, тяжелый в поворотах.' },
-    { id: 'rally', name: 'Rally Box', cost: 520, color: '#ffb21f', max: 245, accel: 60, brake: 128, handling: 1.86, grip: 1.38, mass: .96, desc: 'Лучше всех едет по траве и грязным обочинам.' },
-    { id: 'drift', name: 'Drift Wedge', cost: 900, color: '#18e078', max: 300, accel: 64, brake: 115, handling: 2.28, grip: .92, mass: .88, desc: 'Острый, нервный, легко уходит в занос.' }
+    { id: 'alpine', name: 'Alpine 8V', price: 0, img: 'alpine', color: '#ffd231', max: 188, accel: 42, brake: 82, handling: 1.22, grip: 1.08, mass: .92, drift: .82, desc: 'баланс / легко рулить' },
+    { id: 'mini', name: 'Mini Rally', price: 180, img: 'mini', color: '#4ac7ff', max: 165, accel: 50, brake: 96, handling: 1.62, grip: 1.28, mass: .72, drift: .55, desc: 'лучшее управление' },
+    { id: 'roadster', name: 'Roadster', price: 420, img: 'roadster', color: '#ff334b', max: 215, accel: 53, brake: 88, handling: 1.28, grip: 1.05, mass: .88, drift: .95, desc: 'скорость + дрифт' },
+    { id: 'camaro', name: 'Camaro GT', price: 680, img: 'camaro', color: '#ffb428', max: 235, accel: 58, brake: 80, handling: 1.02, grip: .96, mass: 1.15, drift: 1.15, desc: 'тяжелая мощь' },
+    { id: 'viper', name: 'Viper R', price: 980, img: 'viper', color: '#ff523d', max: 255, accel: 64, brake: 92, handling: 1.12, grip: 1.12, mass: 1.05, drift: .92, desc: 'быстрая, нервная' },
+    { id: 'sidepipe', name: 'Sidepipe V8', price: 1450, img: 'sidepipe', color: '#ff7b2a', max: 268, accel: 68, brake: 94, handling: 1.04, grip: 1.04, mass: 1.10, drift: 1.12, desc: 'мощный V8' },
+    { id: 'raptor', name: 'Raptor 4x4', price: 1650, img: 'raptor', color: '#0d1217', max: 210, accel: 48, brake: 86, handling: .94, grip: 1.56, mass: 1.36, drift: .35, desc: 'держит грунт' },
+    { id: 'slingshot', name: 'Slingshot X', price: 2200, img: 'slingshot', color: '#315dff', max: 290, accel: 78, brake: 102, handling: 1.05, grip: .98, mass: .98, drift: 1.45, desc: 'монстр скорости' }
   ];
 
-  const TRACKS = [
-    {
-      id: 'classic', name: 'Classic GP', lengthName: '5.8 км', scenery: 'classic',
-      desc: 'NES-стиль: прямые, плавные S-повороты, простая разметка.',
-      sections: [
-        [16, 0], [18, .75], [12, 0], [20, -1.05], [10, 0], [26, 1.22],
-        [14, -.55], [18, 0], [16, -1.40], [20, 1.00], [18, 0], [10, -.35]
-      ], coinRate: 2.7, traffic: 11
-    },
-    {
-      id: 'city', name: 'Metro Straight', lengthName: '6.4 км', scenery: 'city',
-      desc: 'Больше длинных прямых, но есть резкие городские связки.',
-      sections: [
-        [22, 0], [30, .25], [18, 0], [15, -1.55], [10, 1.35], [24, 0],
-        [20, .80], [12, 0], [16, -1.20], [30, 0], [14, .55]
-      ], coinRate: 2.2, traffic: 8
-    },
-    {
-      id: 'mountain', name: 'Mountain Snake', lengthName: '5.3 км', scenery: 'mountain',
-      desc: 'Много поворотов, мало прямых, обочина сильнее замедляет.',
-      sections: [
-        [10, 0], [14, 1.65], [8, -1.75], [16, 1.85], [8, 0], [14, -1.95],
-        [12, .95], [10, -.85], [14, 1.70], [12, -1.50], [12, 0]
-      ], coinRate: 3.1, traffic: 12
-    },
-    {
-      id: 'coast', name: 'Coast Run', lengthName: '7.0 км', scenery: 'coast',
-      desc: 'Широкие быстрые дуги и монеты ближе к краям дороги.',
-      sections: [
-        [28, 0], [36, .62], [22, 0], [30, -.72], [16, 0], [24, 1.10],
-        [20, -.92], [34, 0], [18, .35]
-      ], coinRate: 2.9, traffic: 9
-    }
-  ];
-
-  const DIFFICULTIES = [
-    { id: 'easy', name: 'Easy', reward: 1.0, trafficMul: .72, damageMul: .65, gripMul: 1.10, desc: 'Больше сцепления, меньше трафика.' },
-    { id: 'normal', name: 'Normal', reward: 1.25, trafficMul: 1.00, damageMul: 1.00, gripMul: 1.0, desc: 'Баланс как в классической аркаде.' },
-    { id: 'hard', name: 'Hard', reward: 1.65, trafficMul: 1.45, damageMul: 1.35, gripMul: .92, desc: 'Сложнее удержать машину, больше соперников.' },
-    { id: 'retro', name: 'Retro Pain', reward: 2.1, trafficMul: 1.90, damageMul: 1.65, gripMul: .84, desc: 'Почти без права на ошибку.' }
-  ];
-
-  const state = {
-    save: loadSave(),
-    selectedCar: 'starter', selectedTrack: 'classic', selectedDifficulty: 'normal',
-    segments: [], trackLength: 0, map: [], objects: [],
-    running: false, paused: false, finished: false,
-    position: 0, speed: 0, playerX: 0, steerVelocity: 0, carLean: 0,
-    lap: 1, laps: 2, lapStartedAt: 0, raceTime: 0, raceCoins: 0, damage: 0, odometer: 0,
-    lastFrame: 0, flash: 0, countdown: 0
+  const DIFF = {
+    easy: { name: 'Лёгкая', traffic: .65, damage: .55, grip: 1.14, coins: 1.0, desc: 'меньше трафика' },
+    normal: { name: 'Нормальная', traffic: 1, damage: 1, grip: 1, coins: 1.15, desc: 'баланс' },
+    hard: { name: 'Хард', traffic: 1.65, damage: 1.45, grip: .88, coins: 1.45, desc: 'больше монет' }
   };
 
-  const input = { left: false, right: false, gas: false, brake: false };
+  const TRACK_DEFS = [
+    { id: 'country', name: 'Roll On Down The Line', shot: 'countryShot', laps: 3, length: 4100, grip: 1.06, curveForce: 1.05, palette: 'country', desc: 'длинные прямые + плавные дуги', cmds: [
+      [120,0], [80,.4], [90,0], [110,-.5], [70,0], [90,.75], [70,.25], [130,0], [110,-.85], [60,0], [90,.45], [120,0]
+    ]},
+    { id: 'downtown', name: 'Downtown Sprint', shot: 'downtownShot', laps: 3, length: 3600, grip: .98, curveForce: 1.2, palette: 'city', desc: 'короткие прямые, резкие повороты', cmds: [
+      [60,0], [65,.9], [45,0], [70,-1.05], [50,.2], [80,.85], [55,-.65], [70,0], [75,-.95], [60,.7], [80,0]
+    ]},
+    { id: 'nightcity', name: 'Night City Loop', shot: 'nightShot', laps: 4, length: 3900, grip: .93, curveForce: 1.35, palette: 'night', desc: 'ночь, скользкий асфальт', cmds: [
+      [70,0], [100,.35], [70,-.85], [70,-.35], [120,.9], [55,0], [110,-.95], [70,.8], [90,0]
+    ]},
+    { id: 'lava', name: 'Lavafalls Ridge', shot: 'lavaShot', laps: 2, length: 4800, grip: .89, curveForce: 1.45, palette: 'lava', desc: 'быстрые связки + опасные края', cmds: [
+      [100,0], [90,-.75], [50,.65], [110,-1.1], [70,0], [120,1.0], [50,-.3], [100,0], [85,.75], [85,-.85]
+    ]},
+    { id: 'valley', name: 'Valley Run', shot: 'valleyShot', laps: 3, length: 4400, grip: 1.13, curveForce: .95, palette: 'valley', desc: 'широкая трасса, быстрый поток', cmds: [
+      [150,0], [140,.25], [100,0], [120,-.35], [130,0], [90,.55], [100,0], [120,-.55], [140,0]
+    ]}
+  ];
 
-  function loadSave() {
-    try {
-      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-      return {
-        coins: Number.isFinite(raw.coins) ? raw.coins : 0,
-        owned: Array.isArray(raw.owned) ? raw.owned : ['starter'],
-        best: raw.best || {},
-        selectedCar: raw.selectedCar || 'starter',
-        selectedTrack: raw.selectedTrack || 'classic',
-        selectedDifficulty: raw.selectedDifficulty || 'normal'
-      };
-    } catch {
-      return { coins: 0, owned: ['starter'], best: {}, selectedCar: 'starter', selectedTrack: 'classic', selectedDifficulty: 'normal' };
-    }
-  }
-
-  function saveGame() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.save));
-  }
-
-  function byId(list, id) { return list.find(x => x.id === id) || list[0]; }
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function lerp(a, b, t) { return a + (b - a) * t; }
-  function easeInOut(t) { return (1 - Math.cos(t * Math.PI)) / 2; }
-  function percentRemaining(n, total) { return (n % total) / total; }
-  function formatTime(t) {
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60);
-    const cs = Math.floor((t - Math.floor(t)) * 100);
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
-  }
-
-  function newPoint(z, y = 0) {
-    return { world: { x: 0, y, z }, camera: {}, screen: {} };
-  }
-
-  function addSegment(curve, y) {
-    const n = state.segments.length;
-    state.segments.push({
-      index: n,
-      p1: newPoint(n * SEGMENT_LENGTH, y),
-      p2: newPoint((n + 1) * SEGMENT_LENGTH, y),
-      curve,
-      color: Math.floor(n / 3) % 2
-    });
-  }
-
-  function buildTrack(track) {
-    state.segments = [];
-    let currentCurve = 0;
-    let y = 0;
-    for (const [length, targetCurve] of track.sections) {
-      for (let i = 0; i < length; i++) {
-        const t = easeInOut(i / Math.max(1, length - 1));
-        const c = lerp(currentCurve, targetCurve, t);
-        y += Math.sin((state.segments.length / 17)) * 0.25;
-        addSegment(c, y);
+  function generateTrack(def) {
+    const segLen = 18;
+    const segments = [];
+    let curve = 0;
+    let x = 0;
+    let index = 0;
+    const push = (target, count) => {
+      for (let i = 0; i < count; i++) {
+        const t = count <= 1 ? 1 : i / (count - 1);
+        curve = lerp(curve, target, .055 + .08 * Math.sin(t * Math.PI));
+        x += curve * .025;
+        const rumble = Math.floor(index / 3) % 2;
+        const lane = Math.floor(index / 8) % 2;
+        segments.push({ index, curve, x, rumble, lane });
+        index++;
       }
-      currentCurve = targetCurve;
-    }
-    // плавное возвращение к нулю перед финишем
-    for (let i = 0; i < 18; i++) {
-      addSegment(lerp(currentCurve, 0, easeInOut(i / 17)), y);
-    }
-    state.trackLength = state.segments.length * SEGMENT_LENGTH;
-    buildObjects(track);
-    buildMap();
+    };
+    for (const [count, c] of def.cmds) push(c, count);
+    push(0, 80);
+    const realLen = segments.length * segLen;
+    return { ...def, segLen, segments, realLen };
   }
 
-  function buildObjects(track) {
-    const difficulty = byId(DIFFICULTIES, state.selectedDifficulty);
-    state.objects = [];
-    for (let i = 18; i < state.segments.length - 8; i += Math.max(5, Math.floor(11 / track.coinRate))) {
-      const zig = Math.sin(i * 1.77);
-      const offset = clamp(zig * .55 + Math.sin(i * .23) * .22, -.82, .82);
-      state.objects.push({ type: 'coin', z: i * SEGMENT_LENGTH + 22, offset, taken: false, spin: (i % 8) / 8 });
-    }
-    const trafficEvery = Math.max(7, Math.floor(track.traffic / difficulty.trafficMul));
-    for (let i = 24; i < state.segments.length - 12; i += trafficEvery) {
-      const offset = [-.56, -.24, .26, .58][i % 4];
-      const color = ['#ffdf28', '#f04747', '#ffffff', '#3268ff', '#29dc83'][i % 5];
-      state.objects.push({ type: 'traffic', z: i * SEGMENT_LENGTH + 30, offset, color, wobble: Math.sin(i) });
-    }
+  const TRACKS = TRACK_DEFS.map(generateTrack);
+
+  const defaultSave = () => ({
+    coins: 0,
+    selectedCar: 'alpine',
+    selectedTrack: 'country',
+    difficulty: 'normal',
+    unlocked: { alpine: true },
+    bestTimes: {},
+    odometer: 0
+  });
+
+  const storeKey = 'q3-html-retro-rally-v4';
+  let save = defaultSave();
+  try {
+    save = { ...defaultSave(), ...(JSON.parse(localStorage.getItem(storeKey) || '{}')) };
+    save.unlocked = { ...defaultSave().unlocked, ...(save.unlocked || {}) };
+    save.bestTimes = save.bestTimes || {};
+  } catch (_) {}
+
+  function persist() {
+    localStorage.setItem(storeKey, JSON.stringify(save));
+    updateGarageNumbers();
   }
 
-  function buildMap() {
-    const pts = [];
-    let x = 0, y = 0, a = 0;
-    for (const seg of state.segments) {
-      a += seg.curve * 0.012;
-      x += Math.sin(a) * 2.4;
-      y += Math.cos(a) * 2.4;
-      pts.push({ x, y });
-    }
-    const minX = Math.min(...pts.map(p => p.x));
-    const maxX = Math.max(...pts.map(p => p.x));
-    const minY = Math.min(...pts.map(p => p.y));
-    const maxY = Math.max(...pts.map(p => p.y));
-    state.map = pts.map(p => ({ x: (p.x - minX) / Math.max(1, maxX - minX), y: (p.y - minY) / Math.max(1, maxY - minY) }));
+  const controls = { gas: false, brake: false, left: false, right: false, handbrake: false };
+  const keyMap = {
+    ArrowUp: 'gas', KeyW: 'gas', KeyЦ: 'gas',
+    ArrowDown: 'brake', KeyS: 'brake', KeyЫ: 'brake',
+    ArrowLeft: 'left', KeyA: 'left', KeyФ: 'left',
+    ArrowRight: 'right', KeyD: 'right', KeyВ: 'right',
+    Space: 'handbrake'
+  };
+
+  window.addEventListener('keydown', (e) => {
+    const k = keyMap[e.code] || keyMap[e.key];
+    if (k) { controls[k] = true; e.preventDefault(); }
+    if (e.code === 'KeyP') togglePause();
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => {
+    const k = keyMap[e.code] || keyMap[e.key];
+    if (k) { controls[k] = false; e.preventDefault(); }
+  }, { passive: false });
+
+  document.querySelectorAll('[data-touch]').forEach((btn) => {
+    const name = btn.dataset.touch;
+    const map = { gas: 'gas', brake: 'brake', left: 'left', right: 'right' };
+    const set = (v) => { controls[map[name]] = v; };
+    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); set(true); btn.setPointerCapture(e.pointerId); });
+    btn.addEventListener('pointerup', (e) => { e.preventDefault(); set(false); });
+    btn.addEventListener('pointercancel', () => set(false));
+    btn.addEventListener('pointerleave', () => set(false));
+  });
+
+  let W = 1280, H = 720, DPR = 1;
+  let horizon = 280, roadBottom = 560, hudH = 160;
+
+  function resize() {
+    DPR = clamp(window.devicePixelRatio || 1, 1, 2);
+    W = Math.floor(window.innerWidth * DPR);
+    H = Math.floor(window.innerHeight * DPR);
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+    ctx.imageSmoothingEnabled = false;
+    hudH = Math.max(132 * DPR, Math.min(188 * DPR, H * .23));
+    roadBottom = H - hudH;
+    horizon = Math.max(95 * DPR, roadBottom * .42);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const game = {
+    mode: 'menu',
+    paused: false,
+    car: null,
+    track: null,
+    diff: null,
+    speed: 0,
+    gear: 1,
+    rpm: 0,
+    x: 0,
+    dx: 0,
+    steerLean: 0,
+    pos: 0,
+    lap: 1,
+    raceTime: 0,
+    damage: 0,
+    raceCoins: 0,
+    totalMeters: 0,
+    coins: [],
+    traffic: [],
+    cameraShake: 0,
+    finishCooldown: 0,
+    lastSegmentIndex: 0,
+    curveVisual: 0,
+    skidTimer: 0,
+    messageTimer: 0
+  };
+
+  function selectedCar() { return CARS.find(c => c.id === save.selectedCar) || CARS[0]; }
+  function selectedTrack() { return TRACKS.find(t => t.id === save.selectedTrack) || TRACKS[0]; }
+  function selectedDiff() { return DIFF[save.difficulty] || DIFF.normal; }
+
+  function getSegmentAt(track, distance) {
+    const idx = Math.floor((((distance % track.realLen) + track.realLen) % track.realLen) / track.segLen) % track.segments.length;
+    return track.segments[idx];
   }
 
-  function findSegment(z) {
-    return state.segments[Math.floor(z / SEGMENT_LENGTH) % state.segments.length];
+  function showMessage(txt, ms = 1250) {
+    raceMessage.textContent = txt;
+    raceMessage.classList.remove('hidden');
+    game.messageTimer = ms / 1000;
+  }
+
+  function buildMenu() {
+    carsEl.innerHTML = '';
+    CARS.forEach((car) => {
+      const unlocked = !!save.unlocked[car.id];
+      const selected = save.selectedCar === car.id;
+      const card = document.createElement('button');
+      card.className = `card car-card ${selected ? 'selected' : ''} ${unlocked ? '' : 'locked'}`;
+      card.innerHTML = `
+        <img src="assets/cars/${car.img}.png" alt="${car.name}">
+        <div>
+          <h3>${car.name}</h3>
+          <div class="meta">
+            <span>${car.desc}</span>
+            <span>${unlocked ? 'Открыта' : `Цена: ${car.price} монет`}</span>
+          </div>
+          <div class="bars">
+            <div class="bar" title="скорость"><i style="width:${clamp(car.max / 290 * 100, 0, 100)}%"></i></div>
+            <div class="bar" title="разгон"><i style="width:${clamp(car.accel / 78 * 100, 0, 100)}%"></i></div>
+            <div class="bar" title="управление"><i style="width:${clamp(car.handling / 1.62 * 100, 0, 100)}%"></i></div>
+          </div>
+        </div>
+        <span class="card-action ${unlocked ? '' : 'buy'}">${unlocked ? (selected ? 'Выбрано' : 'Выбрать') : 'Купить'}</span>
+      `;
+      card.addEventListener('click', () => {
+        if (!save.unlocked[car.id]) {
+          if (save.coins >= car.price) {
+            save.coins -= car.price;
+            save.unlocked[car.id] = true;
+            save.selectedCar = car.id;
+            persist();
+            buildMenu();
+            showMessage('Куплено', 900);
+          } else {
+            showMessage(`Нужно ${car.price - save.coins} монет`, 1200);
+          }
+          return;
+        }
+        save.selectedCar = car.id;
+        persist();
+        buildMenu();
+      });
+      carsEl.appendChild(card);
+    });
+
+    tracksEl.innerHTML = '';
+    TRACKS.forEach((track) => {
+      const selected = save.selectedTrack === track.id;
+      const card = document.createElement('button');
+      card.className = `card track-card ${selected ? 'selected' : ''}`;
+      card.style.backgroundImage = `url(assets/levelshots/${track.shot.replace('Shot', '')}.jpg)`;
+      const shotMap = { countryShot: 'country', downtownShot: 'downtown', nightShot: 'nightcity', lavaShot: 'lavafalls', valleyShot: 'valley' };
+      card.style.backgroundImage = `url(assets/levelshots/${shotMap[track.shot]}.jpg)`;
+      const best = save.bestTimes[track.id] ? `Лучшее: ${fmtTime(save.bestTimes[track.id])}` : 'Лучшее: —';
+      card.innerHTML = `<div><h3>${track.name}</h3><div class="meta"><span>${track.desc}</span><span>${track.laps} круга • ${Math.round(track.realLen / 1000 * 10) / 10} км • ${best}</span></div></div>`;
+      card.addEventListener('click', () => { save.selectedTrack = track.id; persist(); buildMenu(); });
+      tracksEl.appendChild(card);
+    });
+
+    diffEl.innerHTML = '';
+    Object.entries(DIFF).forEach(([id, d]) => {
+      const b = document.createElement('button');
+      b.className = `diff-btn ${save.difficulty === id ? 'selected' : ''}`;
+      b.innerHTML = `${d.name}<br><small>${d.desc}</small>`;
+      b.addEventListener('click', () => { save.difficulty = id; persist(); buildMenu(); });
+      diffEl.appendChild(b);
+    });
+    updateGarageNumbers();
+  }
+
+  function updateGarageNumbers() {
+    totalCoinsEl.textContent = Math.floor(save.coins);
+    garageOdoEl.textContent = `${(save.odometer / 1000).toFixed(1)} км`;
   }
 
   function startRace() {
-    const track = byId(TRACKS, state.selectedTrack);
-    buildTrack(track);
-    state.position = 0;
-    state.speed = 0;
-    state.playerX = 0;
-    state.steerVelocity = 0;
-    state.carLean = 0;
-    state.lap = 1;
-    state.laps = 2;
-    state.raceTime = 0;
-    state.raceCoins = 0;
-    state.damage = 0;
-    state.odometer = 0;
-    state.running = true;
-    state.paused = false;
-    state.finished = false;
-    state.countdown = 2.2;
-    state.lastFrame = performance.now();
-    document.getElementById('menu').classList.remove('open');
-    document.getElementById('finish').classList.remove('open');
-    requestAnimationFrame(frame);
+    game.mode = 'race';
+    game.paused = false;
+    game.car = selectedCar();
+    game.track = selectedTrack();
+    game.diff = selectedDiff();
+    game.speed = 0;
+    game.gear = 1;
+    game.rpm = 0;
+    game.x = 0;
+    game.dx = 0;
+    game.steerLean = 0;
+    game.pos = 0;
+    game.lap = 1;
+    game.raceTime = 0;
+    game.damage = 0;
+    game.raceCoins = 0;
+    game.totalMeters = 0;
+    game.cameraShake = 0;
+    game.finishCooldown = 0;
+    game.lastSegmentIndex = 0;
+    game.curveVisual = 0;
+    game.skidTimer = 0;
+    buildCoins();
+    buildTraffic();
+    menu.classList.add('hidden');
+    canvas.focus();
+    showMessage('GO!', 750);
+    playSound('go', .5);
   }
 
-  function finishRace(reason = 'finish') {
-    state.running = false;
-    state.finished = true;
-    const difficulty = byId(DIFFICULTIES, state.selectedDifficulty);
-    const timeBonus = reason === 'finish' ? Math.max(0, Math.floor((190 - state.raceTime) * difficulty.reward)) : 0;
-    const reward = Math.floor((state.raceCoins + timeBonus) * difficulty.reward);
-    state.save.coins += reward;
-    const key = `${state.selectedTrack}_${state.selectedDifficulty}`;
-    if (reason === 'finish' && (!state.save.best[key] || state.raceTime < state.save.best[key])) state.save.best[key] = state.raceTime;
-    saveGame();
-    document.getElementById('finishTitle').textContent = reason === 'crash' ? 'МАШИНА РАЗБИТА' : 'ФИНИШ!';
-    document.getElementById('finishText').innerHTML = reason === 'crash'
-      ? `Урон достиг 100%. Собрано монет за заезд: <b>${state.raceCoins}</b>. Начислено: <b>${reward}</b>.`
-      : `Время: <b>${formatTime(state.raceTime)}</b><br>Монеты на трассе: <b>${state.raceCoins}</b><br>Бонус: <b>${timeBonus}</b><br>Начислено всего: <b>${reward}</b>.`;
-    document.getElementById('finish').classList.add('open');
-    renderMenu();
+  function finishRace() {
+    if (game.finishCooldown > 0) return;
+    game.finishCooldown = 3;
+    const earned = Math.floor(game.raceCoins * game.diff.coins + Math.max(0, 40 - game.damage * 30));
+    save.coins += earned;
+    save.odometer += game.totalMeters;
+    const best = save.bestTimes[game.track.id];
+    if (!best || game.raceTime < best) save.bestTimes[game.track.id] = game.raceTime;
+    persist();
+    showMessage(`Финиш +${earned} монет`, 2600);
+    playSound('checkpoint', .6);
+    setTimeout(() => {
+      game.mode = 'menu';
+      menu.classList.remove('hidden');
+      buildMenu();
+    }, 2600);
+  }
+
+  function buildCoins() {
+    game.coins = [];
+    const t = game.track;
+    const count = Math.floor(t.segments.length / 4);
+    for (let i = 0; i < count; i++) {
+      const z = (i * t.realLen / count + rand(-20, 20) + 120) % t.realLen;
+      const lane = [-.52, -.27, 0, .27, .52][Math.floor(Math.random() * 5)];
+      game.coins.push({ z, x: lane + rand(-.04, .04), taken: false });
+    }
+  }
+
+  function buildTraffic() {
+    game.traffic = [];
+    const t = game.track;
+    const density = Math.floor(18 * game.diff.traffic + t.realLen / 520);
+    for (let i = 0; i < density; i++) {
+      game.traffic.push({
+        z: (i * t.realLen / density + rand(180, 520)) % t.realLen,
+        x: [-.58, -.28, .22, .55][Math.floor(Math.random() * 4)] + rand(-.06, .06),
+        speed: rand(48, 115),
+        color: ['#e73535','#2759ff','#fed133','#f6f6f6','#32dd7c','#ff7b2a'][Math.floor(Math.random() * 6)],
+        w: rand(.9, 1.18)
+      });
+    }
+  }
+
+  startBtn.addEventListener('click', startRace);
+  resetBtn.addEventListener('click', () => {
+    if (!confirm('Сбросить монеты, покупки, рекорды и одометр?')) return;
+    save = defaultSave();
+    persist();
+    buildMenu();
+  });
+  pauseBtn.addEventListener('click', togglePause);
+  menuBtn.addEventListener('click', () => {
+    game.mode = 'menu';
+    game.paused = false;
+    menu.classList.remove('hidden');
+    buildMenu();
+  });
+
+  function togglePause() {
+    if (game.mode !== 'race') return;
+    game.paused = !game.paused;
+    showMessage(game.paused ? 'Пауза' : 'GO!', 700);
   }
 
   function update(dt) {
-    if (!state.running || state.paused) return;
-    const car = byId(CARS, state.selectedCar);
-    const track = byId(TRACKS, state.selectedTrack);
-    const difficulty = byId(DIFFICULTIES, state.selectedDifficulty);
-    if (state.countdown > 0) {
-      state.countdown -= dt;
-      return;
+    if (game.messageTimer > 0) {
+      game.messageTimer -= dt;
+      if (game.messageTimer <= 0) raceMessage.classList.add('hidden');
+    }
+    if (game.mode !== 'race' || game.paused || game.finishCooldown > 0) return;
+
+    const car = game.car;
+    const track = game.track;
+    const diff = game.diff;
+    const seg = getSegmentAt(track, game.pos);
+    const speedPct = clamp(game.speed / car.max, 0, 1.25);
+    const offroad = Math.abs(game.x) > 1.02;
+    const hardOff = Math.abs(game.x) > 1.36;
+    const traction = car.grip * track.grip * diff.grip * (offroad ? .42 : 1) * (controls.handbrake ? .38 : 1);
+
+    let acc = 0;
+    if (controls.gas) acc += car.accel * (1 - speedPct * .45);
+    if (controls.brake) acc -= car.brake * (game.speed > 20 ? 1 : .55);
+    if (!controls.gas) acc -= 18 + game.speed * .025;
+    acc -= game.speed * game.speed * .0012;
+    if (offroad) acc -= 36 + game.speed * .18;
+    if (hardOff) acc -= 28 + Math.abs(game.x) * 18;
+    game.speed = clamp(game.speed + acc * dt, 0, car.max * (offroad ? .58 : 1));
+
+    const steerInput = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
+    const steeringLive = game.speed > 2 ? (0.38 + speedPct * 1.45) : .15;
+    const steerPower = car.handling * steeringLive / Math.sqrt(car.mass);
+    const driftBonus = controls.handbrake ? (1.8 + car.drift) : (1.0 + car.drift * .18);
+    const curvePush = seg.curve * track.curveForce * (0.55 + speedPct * 2.2) * speedPct;
+
+    game.dx += steerInput * steerPower * dt * driftBonus;
+    game.dx -= curvePush * dt;
+    const damping = Math.exp(-dt * (2.7 + traction * 2.8));
+    game.dx *= damping;
+    if (offroad) game.dx *= Math.exp(-dt * 2.2);
+    game.x += game.dx * dt * (0.9 + speedPct * 2.8);
+    if (Math.abs(game.x) > 1.64) {
+      game.x = sign(game.x) * 1.64;
+      game.dx *= -.18;
+      game.damage = clamp(game.damage + dt * .04 * diff.damage, 0, 1);
+      game.cameraShake = Math.max(game.cameraShake, .35);
+      if (Math.random() < dt * 3) playSound('scrape', .25);
     }
 
-    const maxSpeed = car.max * (1 - state.damage * 0.0035);
-    const throttle = input.gas ? 1 : 0;
-    const brake = input.brake ? 1 : 0;
-    const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    const speedRatio = clamp(state.speed / Math.max(1, car.max), 0, 1.25);
-    const offRoad = Math.abs(state.playerX) > 1.0;
-    const offRoadAmount = Math.max(0, Math.abs(state.playerX) - 1.0);
-    const rallyBonus = car.id === 'rally' ? .48 : 1;
-
-    if (throttle) state.speed += car.accel * (1 - speedRatio * .36) * dt;
-    else state.speed -= (16 + speedRatio * 24) * dt;
-    if (brake) state.speed -= car.brake * dt;
-    state.speed -= (5.8 + speedRatio * 9.5) * dt; // сопротивление
-    if (offRoad) {
-      state.speed -= (52 + 135 * offRoadAmount) * rallyBonus * dt;
-      state.damage += (3.5 + 13 * offRoadAmount) * difficulty.damageMul * dt;
-    }
-    state.speed = clamp(state.speed, 0, maxSpeed);
-
-    const seg = findSegment(state.position);
-    const grip = car.grip * difficulty.gripMul * (offRoad ? (car.id === 'rally' ? .88 : .55) : 1);
-    const steeringPower = car.handling * grip * (0.22 + speedRatio * 1.05);
-    const targetSteerVelocity = steer * steeringPower;
-    state.steerVelocity = lerp(state.steerVelocity, targetSteerVelocity, clamp(dt * 7.5, 0, 1));
-    state.playerX += state.steerVelocity * dt;
-
-    // Снос наружу поворота: чем выше скорость, тем сильнее дорога "выкидывает".
-    const centrifugal = seg.curve * speedRatio * speedRatio * (1.08 / Math.max(.55, grip));
-    state.playerX -= centrifugal * dt;
-
-    if (Math.abs(state.playerX) > 1.42) {
-      state.playerX = clamp(state.playerX, -1.42, 1.42);
-      state.speed *= 1 - .9 * dt;
-      state.damage += 8 * difficulty.damageMul * dt;
+    const slip = Math.abs(game.dx) * speedPct + Math.abs(steerInput) * speedPct * (controls.handbrake ? .8 : .25) + (offroad ? .25 : 0);
+    if (slip > .42 && game.speed > 45) {
+      game.skidTimer -= dt;
+      if (game.skidTimer <= 0) { playSound('skid', .18); game.skidTimer = .62; }
     }
 
-    state.carLean = lerp(state.carLean, steer * .65 - seg.curve * .18, clamp(dt * 8, 0, 1));
+    game.steerLean = lerp(game.steerLean, steerInput * .9 + game.dx * 1.9, 1 - Math.exp(-dt * 8));
+    game.curveVisual = lerp(game.curveVisual, seg.curve, 1 - Math.exp(-dt * 3));
+    game.pos += game.speed * dt;
+    game.totalMeters += game.speed * dt;
+    game.raceTime += dt;
+    game.cameraShake = Math.max(0, game.cameraShake - dt * 1.6);
 
-    const oldPosition = state.position;
-    const meters = (state.speed / 3.6) * dt;
-    state.position = (state.position + meters) % state.trackLength;
-    state.odometer += meters / 1000;
-    state.raceTime += dt;
-
-    if (oldPosition > state.position) {
-      state.lap += 1;
-      if (state.lap > state.laps) finishRace('finish');
+    const oldLap = game.lap;
+    game.lap = Math.floor(game.pos / track.realLen) + 1;
+    if (game.lap !== oldLap && game.lap <= track.laps) {
+      showMessage(`Круг ${game.lap}/${track.laps}`, 1100);
+      playSound('checkpoint', .5);
     }
+    if (game.lap > track.laps) finishRace();
+
+    game.gear = clamp(Math.floor(game.speed / (car.max / 5)) + 1, 1, 6);
+    game.rpm = clamp((game.speed / car.max) * 0.78 + (game.gear % 2) * .08 + (controls.gas ? .18 : .03), 0, 1.12);
 
     updateObjects(dt);
-    if (state.damage >= 100) finishRace('crash');
+  }
+
+  function wrapDistance(d, len) {
+    d = d % len;
+    if (d < 0) d += len;
+    return d;
+  }
+
+  function aheadDelta(z, pos, len) {
+    let dz = z - (pos % len);
+    if (dz < -40) dz += len;
+    return dz;
   }
 
   function updateObjects(dt) {
-    const difficulty = byId(DIFFICULTIES, state.selectedDifficulty);
-    for (const obj of state.objects) {
-      let dz = obj.z - state.position;
-      if (dz < -50) dz += state.trackLength;
-      if (dz > 45 || dz < 0) continue;
-      const laneHit = Math.abs(obj.offset - state.playerX);
-      if (obj.type === 'coin' && !obj.taken && laneHit < .17) {
-        obj.taken = true;
-        state.raceCoins += 1;
-        state.flash = .25;
-        state.save.coins += 1;
-        saveGame();
-      } else if (obj.type === 'traffic' && laneHit < .27 && state.speed > 25) {
-        state.speed *= .46;
-        state.damage += 18 * difficulty.damageMul;
-        state.playerX += (state.playerX > obj.offset ? .17 : -.17);
-        state.flash = .45;
+    const track = game.track;
+    for (const coin of game.coins) {
+      if (coin.taken) continue;
+      const dz = aheadDelta(coin.z, game.pos, track.realLen);
+      if (dz > -8 && dz < 24 && Math.abs(coin.x - game.x) < .17) {
+        coin.taken = true;
+        game.raceCoins += 1;
+        playSound('checkpoint', .18);
+      }
+      if (dz < -22) coin.taken = false;
+    }
+    for (const t of game.traffic) {
+      t.z = wrapDistance(t.z + t.speed * dt * .52, track.realLen);
+      const dz = aheadDelta(t.z, game.pos, track.realLen);
+      if (dz > -14 && dz < 20 && Math.abs(t.x - game.x) < .22 * t.w && game.speed > 14) {
+        game.damage = clamp(game.damage + .11 * game.diff.damage + game.speed / 900, 0, 1);
+        game.speed *= .55;
+        game.dx += (game.x > t.x ? 1 : -1) * .42;
+        t.x += (t.x > game.x ? 1 : -1) * .13;
+        game.cameraShake = 1;
+        playSound('scrape', .55);
+        showMessage('HIT!', 450);
       }
     }
-    if (state.flash > 0) state.flash -= dt;
+    if (game.damage >= 1) {
+      showMessage('TOTAL DAMAGE', 1700);
+      setTimeout(() => {
+        save.odometer += game.totalMeters;
+        persist();
+        game.mode = 'menu';
+        menu.classList.remove('hidden');
+        buildMenu();
+      }, 1700);
+      game.finishCooldown = 2;
+    }
   }
 
-  function project(point, cameraX, cameraY, cameraZ, looped) {
-    const z = point.world.z + (looped ? state.trackLength : 0);
-    point.camera.x = point.world.x - cameraX;
-    point.camera.y = point.world.y - cameraY;
-    point.camera.z = z - cameraZ;
-    point.screen.scale = CAMERA_DEPTH / Math.max(1, point.camera.z);
-    point.screen.x = Math.round((W / 2) + (point.screen.scale * point.camera.x * W / 2));
-    point.screen.y = Math.round((GAME_H / 2) - (point.screen.scale * point.camera.y * GAME_H / 2));
-    point.screen.w = Math.round(point.screen.scale * ROAD_WIDTH * W / 2);
+  function rowGeom(i, visible, curveOffset = 0) {
+    const t = clamp(i / visible, 0, 1);
+    const p = Math.pow(t, 1.72);
+    const y = horizon + (roadBottom - horizon) * p;
+    const width = lerp(22 * DPR, W * .94, Math.pow(t, 1.15));
+    const center = W / 2 + curveOffset * width * .62 - game.x * width * .38;
+    return { t, p, y, width, center };
   }
 
-  function polygon(points, fill) {
+  function buildRoadCache() {
+    const visible = Math.max(84, Math.floor(120 + game.speed * .24));
+    const rows = [];
+    let curveSpeed = 0;
+    let curveOffset = 0;
+    const step = game.track.segLen * .95;
+    for (let i = 0; i <= visible; i++) {
+      const dist = game.pos + i * step;
+      const seg = getSegmentAt(game.track, dist);
+      curveSpeed += seg.curve * .017;
+      curveOffset += curveSpeed;
+      const g = rowGeom(i, visible, curveOffset);
+      rows.push({ ...g, seg, dist, curveOffset });
+    }
+    return rows;
+  }
+
+  function render() {
+    ctx.imageSmoothingEnabled = false;
+    const shakeX = game.cameraShake ? rand(-4, 4) * DPR * game.cameraShake : 0;
+    const shakeY = game.cameraShake ? rand(-3, 3) * DPR * game.cameraShake : 0;
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+    const track = game.track || selectedTrack();
+    drawSky(track);
+    if (game.mode === 'race') {
+      const road = buildRoadCache();
+      drawRoad(road, track);
+      drawWorldObjects(road);
+      drawPlayerCar();
+      drawHud();
+    } else {
+      drawAttract(track);
+    }
+    ctx.restore();
+  }
+
+  function drawSky(track) {
+    const pal = track.palette;
+    const grad = ctx.createLinearGradient(0, 0, 0, roadBottom);
+    if (pal === 'night') { grad.addColorStop(0, '#061731'); grad.addColorStop(.7, '#102b55'); grad.addColorStop(1, '#143c64'); }
+    else if (pal === 'lava') { grad.addColorStop(0, '#3b1020'); grad.addColorStop(.55, '#77412b'); grad.addColorStop(1, '#bb7933'); }
+    else { grad.addColorStop(0, '#57a9ff'); grad.addColorStop(.72, '#69b4ff'); grad.addColorStop(1, '#8fd4ff'); }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, roadBottom);
+
+    const horizonLine = horizon - 8 * DPR;
+    drawClouds(pal);
+
+    if (pal === 'city' || pal === 'night') drawCity(horizonLine, pal === 'night');
+    else if (pal === 'lava') drawLavaMountains(horizonLine);
+    else if (pal === 'valley') drawValley(horizonLine);
+    else drawCountry(horizonLine);
+
+    const grass1 = pal === 'lava' ? '#4b2f1e' : pal === 'night' ? '#0b3c2d' : pal === 'valley' ? '#19a64c' : '#26d737';
+    const grass2 = pal === 'lava' ? '#6e3b20' : pal === 'night' ? '#0e4d37' : pal === 'valley' ? '#22be57' : '#54ed2f';
+    for (let y = Math.max(horizonLine, 0); y < roadBottom; y += 10 * DPR) {
+      ctx.fillStyle = ((y / (10 * DPR)) | 0) % 2 ? grass1 : grass2;
+      ctx.fillRect(0, y, W, 10 * DPR);
+    }
+    ctx.fillStyle = pal === 'night' ? 'rgba(65,180,255,.24)' : 'rgba(75,190,255,.36)';
+    ctx.fillRect(0, horizon + 82 * DPR, W, 4 * DPR);
+  }
+
+  function drawClouds(pal) {
+    if (pal === 'night') {
+      ctx.fillStyle = '#fff2a6';
+      for (let i = 0; i < 34; i++) {
+        const x = ((i * 211 + (game.pos || 0) * .025) % W);
+        const y = (24 + (i * 37) % 135) * DPR;
+        ctx.fillRect(x, y, 3 * DPR, 3 * DPR);
+      }
+      return;
+    }
+    ctx.fillStyle = pal === 'lava' ? '#ffd5b0' : '#fff';
+    for (let i = 0; i < 10; i++) {
+      const x = ((i * 195 - (game.pos || 0) * .045) % (W + 180 * DPR)) - 90 * DPR;
+      const y = (28 + (i * 32) % 95) * DPR;
+      pixelCloud(x, y, (i % 3 + 2) * DPR);
+    }
+  }
+
+  function pixelCloud(x, y, s) {
+    ctx.fillRect(x, y + 8*s, 42*s, 6*s);
+    ctx.fillRect(x + 9*s, y + 2*s, 24*s, 10*s);
+    ctx.fillRect(x + 32*s, y + 6*s, 23*s, 5*s);
+    ctx.fillRect(x - 12*s, y + 12*s, 18*s, 4*s);
+  }
+
+  function drawCity(y, night) {
+    const base = y + 5 * DPR;
+    const colors = night ? ['#0b1220','#16243b','#25324a'] : ['#f2f7fb','#bfe6ff','#1b2434'];
+    let x = -40 * DPR - ((game.pos * .03) % (150 * DPR));
+    let n = 0;
+    while (x < W + 80 * DPR) {
+      const bw = (36 + (n * 19) % 62) * DPR;
+      const bh = (42 + (n * 37) % 118) * DPR;
+      ctx.fillStyle = colors[n % colors.length];
+      ctx.fillRect(x, base - bh, bw, bh);
+      ctx.fillStyle = night ? '#ffe777' : '#78bde6';
+      const wx = Math.max(4 * DPR, bw / 7);
+      for (let yy = base - bh + 10 * DPR; yy < base - 10 * DPR; yy += 14 * DPR) {
+        for (let xx = x + 8 * DPR; xx < x + bw - 8 * DPR; xx += 16 * DPR) {
+          if ((xx + yy + n) % 5 !== 0) ctx.fillRect(xx, yy, wx, 3 * DPR);
+        }
+      }
+      x += bw + (6 + n % 3) * DPR;
+      n++;
+    }
+  }
+
+  function drawCountry(y) {
+    ctx.fillStyle = '#0d7e28';
+    for (let i = 0; i < 13; i++) {
+      const x = ((i * 150 - game.pos * .035) % (W + 260 * DPR)) - 120 * DPR;
+      const h = (35 + (i * 23) % 70) * DPR;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 6 * DPR);
+      ctx.lineTo(x + 75 * DPR, y - h);
+      ctx.lineTo(x + 160 * DPR, y + 6 * DPR);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = '#0b5d22';
+    ctx.fillRect(0, y + 4 * DPR, W, 14 * DPR);
+  }
+
+  function drawValley(y) {
+    ctx.fillStyle = '#204f47';
+    for (let i = 0; i < 10; i++) {
+      const x = ((i * 230 - game.pos * .025) % (W + 360 * DPR)) - 180 * DPR;
+      const h = (80 + (i * 53) % 95) * DPR;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 10 * DPR);
+      ctx.lineTo(x + 95 * DPR, y - h);
+      ctx.lineTo(x + 210 * DPR, y + 10 * DPR);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#5c8c7f';
+      ctx.beginPath();
+      ctx.moveTo(x + 95 * DPR, y - h);
+      ctx.lineTo(x + 122 * DPR, y + 10 * DPR);
+      ctx.lineTo(x + 60 * DPR, y + 10 * DPR);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#204f47';
+    }
+  }
+
+  function drawLavaMountains(y) {
+    ctx.fillStyle = '#2a1721';
+    for (let i = 0; i < 8; i++) {
+      const x = ((i * 260 - game.pos * .02) % (W + 400 * DPR)) - 200 * DPR;
+      const h = (90 + (i * 73) % 120) * DPR;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 18 * DPR);
+      ctx.lineTo(x + 120 * DPR, y - h);
+      ctx.lineTo(x + 260 * DPR, y + 18 * DPR);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ff6a2e';
+      ctx.fillRect(x + 118 * DPR, y - h + 12 * DPR, 8 * DPR, h * .75);
+      ctx.fillStyle = '#2a1721';
+    }
+    ctx.fillStyle = '#ff4d1f';
+    ctx.fillRect(0, y + 15 * DPR, W, 7 * DPR);
+  }
+
+  function drawRoad(rows, track) {
+    const pal = track.palette;
+    for (let i = rows.length - 2; i >= 0; i--) {
+      const near = rows[i + 1];
+      const far = rows[i];
+      const strip = Math.floor((game.pos / track.segLen + i) / 3) % 2;
+      const grass = strip ? paletteGrass(track, 0) : paletteGrass(track, 1);
+      ctx.fillStyle = grass;
+      ctx.fillRect(0, far.y, W, near.y - far.y + 1);
+
+      const shoulderWFar = far.width * .065;
+      const shoulderWNear = near.width * .065;
+      const roadFar = far.width * .48;
+      const roadNear = near.width * .48;
+
+      drawQuad(far.center - roadFar - shoulderWFar, far.y, far.center - roadFar, far.y, near.center - roadNear, near.y, near.center - roadNear - shoulderWNear, near.y, strip ? '#d22218' : '#fff');
+      drawQuad(far.center + roadFar, far.y, far.center + roadFar + shoulderWFar, far.y, near.center + roadNear + shoulderWNear, near.y, near.center + roadNear, near.y, strip ? '#fff' : '#d22218');
+
+      drawQuad(far.center - roadFar, far.y, far.center + roadFar, far.y, near.center + roadNear, near.y, near.center - roadNear, near.y, strip ? paletteRoad(track, 0) : paletteRoad(track, 1));
+
+      if (far.seg.lane) {
+        const laneWFar = Math.max(2 * DPR, far.width * .012);
+        const laneWNear = Math.max(4 * DPR, near.width * .012);
+        for (const l of [-.25, .25]) {
+          drawQuad(
+            far.center + l * roadFar * 2 - laneWFar, far.y,
+            far.center + l * roadFar * 2 + laneWFar, far.y,
+            near.center + l * roadNear * 2 + laneWNear, near.y,
+            near.center + l * roadNear * 2 - laneWNear, near.y,
+            'rgba(255,255,255,.85)'
+          );
+        }
+      }
+      if (i % 18 === 0) {
+        ctx.fillStyle = pal === 'night' ? 'rgba(110,190,255,.26)' : 'rgba(255,255,255,.22)';
+        drawQuad(far.center - roadFar*.96, far.y, far.center + roadFar*.96, far.y, near.center + roadNear*.96, near.y, near.center - roadNear*.96, near.y, ctx.fillStyle);
+      }
+    }
+  }
+
+  function paletteRoad(track, idx) {
+    if (track.palette === 'lava') return idx ? '#5a514e' : '#6b615d';
+    if (track.palette === 'night') return idx ? '#28364b' : '#34465e';
+    return idx ? '#777' : '#858585';
+  }
+  function paletteGrass(track, idx) {
+    if (track.palette === 'lava') return idx ? '#55341f' : '#6b4329';
+    if (track.palette === 'night') return idx ? '#06381f' : '#074626';
+    if (track.palette === 'valley') return idx ? '#149444' : '#20ac51';
+    return idx ? '#22c930' : '#52e92d';
+  }
+
+  function drawQuad(x1, y1, x2, y2, x3, y3, x4, y4, fill) {
     ctx.fillStyle = fill;
     ctx.beginPath();
-    ctx.moveTo(points[0][0], points[0][1]);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineTo(x3, y3);
+    ctx.lineTo(x4, y4);
     ctx.closePath();
     ctx.fill();
   }
 
-  function drawSegment(seg) {
-    const p1 = seg.p1.screen;
-    const p2 = seg.p2.screen;
-    const grass = seg.color ? '#20c83a' : '#1fbf37';
-    const rumble = seg.color ? COLORS.rumbleRed : COLORS.rumbleWhite;
-    const road = seg.color ? COLORS.roadA : COLORS.roadB;
-    const r1 = p1.w / 5.8, r2 = p2.w / 5.8;
-    polygon([[0, p2.y], [W, p2.y], [W, p1.y], [0, p1.y]], grass);
-    polygon([[p2.x - p2.w - r2, p2.y], [p2.x - p2.w, p2.y], [p1.x - p1.w, p1.y], [p1.x - p1.w - r1, p1.y]], rumble);
-    polygon([[p2.x + p2.w, p2.y], [p2.x + p2.w + r2, p2.y], [p1.x + p1.w + r1, p1.y], [p1.x + p1.w, p1.y]], rumble);
-    polygon([[p2.x - p2.w, p2.y], [p2.x + p2.w, p2.y], [p1.x + p1.w, p1.y], [p1.x - p1.w, p1.y]], road);
-    if (seg.color) {
-      for (let lane = 1; lane < LANES; lane++) {
-        const laneW1 = p1.w * 2 / LANES;
-        const laneW2 = p2.w * 2 / LANES;
-        const x1 = p1.x - p1.w + laneW1 * lane;
-        const x2 = p2.x - p2.w + laneW2 * lane;
-        const mark1 = Math.max(1, p1.w / 70);
-        const mark2 = Math.max(1, p2.w / 70);
-        polygon([[x2 - mark2, p2.y], [x2 + mark2, p2.y], [x1 + mark1, p1.y], [x1 - mark1, p1.y]], COLORS.lane);
-      }
+  function projectObject(z, x, rows) {
+    const track = game.track;
+    const dz = aheadDelta(z, game.pos, track.realLen);
+    if (dz < 0 || dz > track.segLen * (rows.length - 1)) return null;
+    const idx = clamp(Math.floor(dz / (track.segLen * .95)), 0, rows.length - 2);
+    const a = rows[idx], b = rows[idx + 1];
+    const f = (dz - idx * track.segLen * .95) / (track.segLen * .95);
+    const y = lerp(a.y, b.y, f);
+    const width = lerp(a.width, b.width, f);
+    const center = lerp(a.center, b.center, f);
+    const roadW = width * .48;
+    return { x: center + x * roadW, y, scale: clamp(width / (W * .9), .025, 1.1), roadW, dz };
+  }
+
+  function drawWorldObjects(rows) {
+    const objs = [];
+    for (const c of game.coins) if (!c.taken) objs.push({ type: 'coin', ...c });
+    for (const t of game.traffic) objs.push({ type: 'traffic', ...t });
+    objs.sort((a, b) => aheadDelta(b.z, game.pos, game.track.realLen) - aheadDelta(a.z, game.pos, game.track.realLen));
+    for (const o of objs) {
+      const p = projectObject(o.z, o.x, rows);
+      if (!p || p.y < horizon || p.y > roadBottom + 20 * DPR) continue;
+      if (o.type === 'coin') drawCoin(p);
+      else drawTrafficCar(p, o);
     }
   }
 
-  function drawBackground(track) {
-    ctx.fillStyle = track.scenery === 'night' ? '#12203f' : COLORS.sky;
-    ctx.fillRect(0, 0, W, GAME_H);
-    drawClouds();
-    if (track.scenery === 'city') drawCity();
-    else if (track.scenery === 'mountain') drawMountains();
-    else if (track.scenery === 'coast') drawCoast();
-    else drawClassicHorizon();
-    // дальнее поле
-    ctx.fillStyle = '#21d33b';
-    ctx.fillRect(0, 124, W, GAME_H - 124);
-    ctx.fillStyle = '#17b735';
-    for (let y = 128; y < GAME_H; y += 6) ctx.fillRect(0, y, W, 2);
-  }
-
-  function drawClouds() {
-    ctx.fillStyle = '#fff';
-    const shift = Math.floor((state.position * .012) % 96);
-    const clouds = [[35,24,20],[102,34,13],[180,18,16],[278,28,22],[390,20,14],[442,34,18]];
-    for (const [x0, y, s] of clouds) {
-      let x = (x0 - shift + W + 40) % (W + 60) - 30;
-      ctx.fillRect(x, y + 8, s * 2, 3);
-      ctx.fillRect(x + 5, y + 4, s, 4);
-      ctx.fillRect(x + 14, y, s * .9, 4);
-      ctx.fillRect(x + 25, y + 5, s, 4);
-    }
-  }
-
-  function drawCity() {
-    const base = 122;
-    const shift = Math.floor((state.position * .018) % 80);
-    const buildings = [18, 28, 45, 24, 38, 32, 50, 27, 42, 34, 26, 49, 31, 36, 22];
-    let x = -shift;
-    for (let i = 0; i < buildings.length + 4; i++) {
-      const h = buildings[i % buildings.length];
-      const w = 18 + (i % 3) * 8;
-      ctx.fillStyle = i % 4 === 0 ? '#111925' : '#e9f0f6';
-      ctx.fillRect(x, base - h, w, h);
-      ctx.fillStyle = i % 4 === 0 ? '#dbe8f4' : '#8db9dc';
-      for (let wx = x + 4; wx < x + w - 3; wx += 6) {
-        for (let wy = base - h + 6; wy < base - 4; wy += 8) ctx.fillRect(wx, wy, 2, 2);
-      }
-      x += w + 4;
-    }
-  }
-
-  function drawMountains() {
-    const base = 124;
-    const shift = Math.floor((state.position * .010) % 140);
-    ctx.fillStyle = '#1d4a51';
-    for (let x = -shift - 60; x < W + 120; x += 78) polygon([[x, base], [x + 40, 68], [x + 82, base]], '#1d4a51');
-    for (let x = -shift - 28; x < W + 120; x += 78) polygon([[x, base], [x + 24, 78], [x + 54, base]], '#5d887d');
-  }
-
-  function drawCoast() {
-    const base = 120;
-    ctx.fillStyle = '#3ea2d8';
-    ctx.fillRect(0, base, W, 9);
-    ctx.fillStyle = '#fff0a8';
-    ctx.fillRect(0, base + 9, W, 5);
-    ctx.fillStyle = '#0f9f42';
-    for (let x = 0; x < W; x += 52) {
-      ctx.fillRect(x + 20, base - 18, 3, 18);
-      polygon([[x + 21, base - 18], [x + 5, base - 4], [x + 24, base - 12]], '#0b7a35');
-      polygon([[x + 21, base - 18], [x + 40, base - 5], [x + 22, base - 12]], '#0b7a35');
-    }
-  }
-
-  function drawClassicHorizon() {
-    const base = 124;
-    ctx.fillStyle = '#0b9928';
-    for (let x = 0; x < W; x += 32) {
-      ctx.fillRect(x, base - 8 - (x % 3) * 2, 22, 8 + (x % 3) * 2);
-      ctx.fillRect(x + 8, base - 13, 18, 13);
-    }
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(58, base - 26, 10, 26);
-    ctx.fillRect(72, base - 16, 12, 16);
-  }
-
-  function drawVisibleWorld() {
-    const track = byId(TRACKS, state.selectedTrack);
-    drawBackground(track);
-    const baseSegment = findSegment(state.position);
-    const basePercent = percentRemaining(state.position, SEGMENT_LENGTH);
-    const playerY = lerp(baseSegment.p1.world.y, baseSegment.p2.world.y, basePercent);
-    let x = 0;
-    let dx = -baseSegment.curve * basePercent;
-    const visible = [];
-
-    for (let n = 0; n < DRAW_DISTANCE; n++) {
-      const seg = state.segments[(baseSegment.index + n) % state.segments.length];
-      const looped = seg.index < baseSegment.index;
-      project(seg.p1, state.playerX * ROAD_WIDTH - x, playerY + CAMERA_HEIGHT, state.position, looped);
-      project(seg.p2, state.playerX * ROAD_WIDTH - x - dx, playerY + CAMERA_HEIGHT, state.position, looped);
-      x += dx;
-      dx += seg.curve;
-      if (seg.p1.camera.z <= 1 || seg.p2.screen.y > GAME_H + 180 || seg.p2.screen.y < -80) continue;
-      visible.push(seg);
-    }
-
-    for (let i = visible.length - 1; i >= 0; i--) drawSegment(visible[i]);
-    drawRoadside(visible);
-    drawObjects(visible);
-    drawPlayerCar();
-    if (state.flash > 0) {
-      ctx.globalAlpha = Math.min(.55, state.flash * 2);
-      ctx.fillStyle = state.flash > .35 ? '#ff2828' : '#fff';
-      ctx.fillRect(0, 0, W, H);
-      ctx.globalAlpha = 1;
-    }
-    drawHud();
-    if (state.countdown > 0 && state.running) drawCountdown();
-  }
-
-  function drawRoadside(visible) {
-    for (let i = visible.length - 8; i >= 0; i -= 9) {
-      const seg = visible[i];
-      if (!seg) continue;
-      const p = seg.p1.screen;
-      const side = (seg.index % 2) ? -1 : 1;
-      const scale = seg.p1.screen.scale * 1500;
-      const x = p.x + side * (p.w + 16 * scale + Math.max(18, p.w * .22));
-      if (scale < .35 || scale > 8) continue;
-      drawBillboard(x, p.y, scale, seg.index);
-    }
-  }
-
-  function drawBillboard(x, y, s, idx) {
-    s = clamp(s, .55, 6.5);
-    const w = 8 * s, h = 12 * s;
-    ctx.fillStyle = idx % 3 === 0 ? '#151515' : '#34444b';
-    ctx.fillRect(x - w / 2, y - h, w, h);
-    ctx.fillStyle = idx % 3 === 0 ? '#ffcf33' : '#f2f2f2';
-    ctx.fillRect(x - w / 2 + s, y - h + s, w - 2 * s, 2 * s);
-  }
-
-  function drawObjects(visible) {
-    const minZ = state.position;
-    const maxZ = state.position + DRAW_DISTANCE * SEGMENT_LENGTH;
-    const candidates = [];
-    for (const obj of state.objects) {
-      if (obj.type === 'coin' && obj.taken) continue;
-      let z = obj.z;
-      if (z < state.position) z += state.trackLength;
-      if (z < minZ || z > maxZ) continue;
-      const seg = findSegment(z % state.trackLength);
-      if (!seg || !visible.includes(seg)) continue;
-      const percent = percentRemaining(z, SEGMENT_LENGTH);
-      const p1 = seg.p1.screen, p2 = seg.p2.screen;
-      const sx = lerp(p1.x, p2.x, percent) + lerp(p1.w, p2.w, percent) * obj.offset;
-      const sy = lerp(p1.y, p2.y, percent);
-      const sc = lerp(p1.scale, p2.scale, percent);
-      candidates.push({ obj, x: sx, y: sy, scale: sc, z });
-    }
-    candidates.sort((a, b) => b.z - a.z);
-    for (const c of candidates) {
-      if (c.obj.type === 'coin') drawCoin(c.x, c.y, c.scale, c.obj.spin);
-      else drawTraffic(c.x, c.y, c.scale, c.obj.color);
-    }
-  }
-
-  function drawCoin(x, y, scale, spin) {
-    const s = clamp(scale * 2600, 2, 18);
-    ctx.fillStyle = '#8a5d00';
-    ctx.fillRect(Math.round(x - s / 2), Math.round(y - s * 1.2), Math.max(1, Math.round(s)), Math.max(1, Math.round(s)));
-    ctx.fillStyle = '#ffcf33';
-    ctx.fillRect(Math.round(x - s / 2 + 1), Math.round(y - s * 1.2 + 1), Math.max(1, Math.round(s - 2)), Math.max(1, Math.round(s - 2)));
-    ctx.fillStyle = '#fff27a';
-    ctx.fillRect(Math.round(x - s / 4), Math.round(y - s * 1.08), Math.max(1, Math.round(s / 3)), Math.max(1, Math.round(s / 6)));
-  }
-
-  function drawTraffic(x, y, scale, color) {
-    const s = clamp(scale * 3600, 3, 32);
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(Math.round(x - s * .58), Math.round(y - s * .28), Math.round(s * .28), Math.round(s * .25));
-    ctx.fillRect(Math.round(x + s * .30), Math.round(y - s * .28), Math.round(s * .28), Math.round(s * .25));
-    ctx.fillStyle = color;
-    polygon([[x - s * .55, y - s * .22], [x - s * .30, y - s * .62], [x + s * .30, y - s * .62], [x + s * .55, y - s * .22], [x + s * .45, y], [x - s * .45, y]], color);
-    ctx.fillStyle = '#0f1a22';
-    ctx.fillRect(Math.round(x - s * .24), Math.round(y - s * .56), Math.round(s * .48), Math.round(s * .22));
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(Math.round(x - s * .44), Math.round(y - s * .18), Math.max(1, Math.round(s * .13)), Math.max(1, Math.round(s * .05)));
-    ctx.fillRect(Math.round(x + s * .30), Math.round(y - s * .18), Math.max(1, Math.round(s * .13)), Math.max(1, Math.round(s * .05)));
-  }
-
-  function drawPlayerCar() {
-    const car = byId(CARS, state.selectedCar);
-    const x = W / 2 + state.playerX * 42;
-    const y = GAME_H - 12;
-    const lean = state.carLean;
-    const w = 48;
-    const h = 26;
+  function drawCoin(p) {
+    const r = Math.max(3 * DPR, 20 * DPR * p.scale);
     ctx.save();
-    ctx.translate(Math.round(x), Math.round(y));
-    ctx.rotate(lean * .10);
-    // тень
-    ctx.fillStyle = 'rgba(0,0,0,.55)';
-    ctx.fillRect(-w / 2 - 1, -5, w + 2, 8);
-    // колеса
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(-24, -16, 9, 22);
-    ctx.fillRect(15, -16, 9, 22);
-    ctx.fillRect(-20, -21, 8, 8);
-    ctx.fillRect(12, -21, 8, 8);
-    // кузов
-    ctx.fillStyle = car.color;
-    polygon([[-22, -5], [-16, -20], [16, -20], [23, -5], [21, 4], [-21, 4]], car.color);
-    ctx.fillStyle = '#101820';
-    ctx.fillRect(-12, -18, 24, 8);
-    ctx.fillStyle = '#e8f5ff';
-    ctx.fillRect(-18, -4, 9, 3);
-    ctx.fillRect(9, -4, 9, 3);
-    ctx.fillStyle = '#111';
-    ctx.fillRect(-9, 2, 18, 4);
+    ctx.translate(p.x, p.y - r * .6);
+    ctx.fillStyle = '#ffce2e';
+    ctx.strokeStyle = '#9b5a00';
+    ctx.lineWidth = Math.max(1, 2 * DPR * p.scale);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * .5, r, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff3a5';
+    ctx.fillRect(-r * .12, -r * .5, r * .22, r);
     ctx.restore();
   }
 
-  function text(txt, x, y, size = 8, color = '#fff', align = 'left') {
-    ctx.fillStyle = color;
-    ctx.font = `900 ${size}px monospace`;
-    ctx.textAlign = align;
-    ctx.textBaseline = 'top';
-    ctx.fillText(txt, x, y);
+  function drawTrafficCar(p, o) {
+    const s = Math.max(.18, p.scale * 1.9) * DPR;
+    ctx.save();
+    ctx.translate(p.x, p.y - 10 * s);
+    ctx.scale(s, s);
+    ctx.fillStyle = 'rgba(0,0,0,.45)';
+    ctx.fillRect(-21, 11, 42, 7);
+    ctx.fillStyle = '#090909';
+    ctx.fillRect(-25, 1, 9, 16);
+    ctx.fillRect(16, 1, 9, 16);
+    ctx.fillStyle = o.color;
+    ctx.fillRect(-18, -7, 36, 19);
+    ctx.fillRect(-13, -17, 26, 13);
+    ctx.fillStyle = '#bff4ff';
+    ctx.fillRect(-8, -14, 16, 7);
+    ctx.fillStyle = '#ffec7b';
+    ctx.fillRect(-16, 8, 7, 4);
+    ctx.fillRect(9, 8, 7, 4);
+    ctx.restore();
+  }
+
+  function drawPlayerCar() {
+    const car = game.car || selectedCar();
+    const near = rowGeom(1, 1, 0);
+    const roadW = W * .94 * .48;
+    const carX = W / 2 + game.x * roadW * .62;
+    const carY = roadBottom - 37 * DPR;
+    const sc = clamp(W / 1280, .68, 1.3) * DPR;
+    ctx.save();
+    ctx.translate(carX, carY);
+    ctx.rotate(clamp(game.steerLean, -1.2, 1.2) * .14);
+    ctx.scale(sc, sc);
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,.48)';
+    ctx.fillRect(-48, 22, 96, 12);
+    // rear tires
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(-54, -4, 18, 34);
+    ctx.fillRect(36, -4, 18, 34);
+    ctx.fillRect(-44, -18, 14, 23);
+    ctx.fillRect(30, -18, 14, 23);
+    // body outline
+    ctx.fillStyle = '#0b0d11';
+    ctx.fillRect(-41, -28, 82, 57);
+    ctx.fillStyle = car.color;
+    ctx.fillRect(-36, -25, 72, 49);
+    ctx.fillRect(-28, -39, 56, 20);
+    ctx.fillStyle = shade(car.color, -38);
+    ctx.fillRect(-30, 6, 60, 18);
+    ctx.fillStyle = shade(car.color, 28);
+    ctx.fillRect(-25, -35, 50, 11);
+    // windows/lights
+    ctx.fillStyle = '#101823';
+    ctx.fillRect(-19, -33, 38, 10);
+    ctx.fillStyle = '#f5e9c0';
+    ctx.fillRect(-33, 13, 14, 6);
+    ctx.fillRect(19, 13, 14, 6);
+    ctx.fillStyle = '#ff263c';
+    ctx.fillRect(-38, -18, 6, 13);
+    ctx.fillRect(32, -18, 6, 13);
+    // steering indicator pixels
+    if (controls.left || controls.right) {
+      ctx.fillStyle = controls.left ? '#ffd338' : '#33e081';
+      ctx.fillRect((controls.left ? -58 : 50), -36, 8, 20);
+    }
+    ctx.restore();
+  }
+
+  function shade(hex, amt) {
+    const n = parseInt(hex.replace('#',''), 16);
+    let r = (n >> 16) + amt, g = ((n >> 8) & 255) + amt, b = (n & 255) + amt;
+    r = clamp(r, 0, 255)|0; g = clamp(g, 0, 255)|0; b = clamp(b, 0, 255)|0;
+    return `rgb(${r},${g},${b})`;
   }
 
   function drawHud() {
-    const y0 = GAME_H;
-    ctx.fillStyle = COLORS.hud;
-    ctx.fillRect(0, y0, W, HUD_H);
-    ctx.globalAlpha = .18;
-    ctx.fillStyle = '#1d2d38';
-    for (let y = y0 + 4; y < H; y += 8) ctx.fillRect(0, y, W, 4);
-    ctx.globalAlpha = 1;
+    const y = roadBottom;
+    ctx.fillStyle = 'rgba(0,0,0,.92)';
+    ctx.fillRect(0, y, W, hudH + 10 * DPR);
+    ctx.fillStyle = 'rgba(255,255,255,.05)';
+    for (let i = 0; i < 9; i++) ctx.fillRect(i * W / 8 - game.pos % 80, y + 10 * DPR + i * 3, W / 5, 4 * DPR);
 
-    const car = byId(CARS, state.selectedCar);
-    const speed = Math.round(state.speed);
-    const rpm = clamp(state.speed / Math.max(1, car.max), 0, 1);
-    const gear = speed < 15 ? 1 : Math.min(6, Math.floor(speed / 54) + 1);
+    const speedKmh = Math.floor(game.speed * 3.6);
+    const leftX = 10 * DPR;
+    drawPixelText('SPEED', leftX, y + 23 * DPR, 13 * DPR, '#fff');
+    drawPixelText(String(speedKmh).padStart(3, '0'), leftX, y + 48 * DPR, 36 * DPR, '#ff382d');
+    drawPixelText('km/h', leftX + 93 * DPR, y + 67 * DPR, 13 * DPR, '#fff');
+    drawPixelText('GEAR', leftX, y + 94 * DPR, 13 * DPR, '#fff');
+    drawPixelText(String(game.gear), leftX + 70 * DPR, y + 90 * DPR, 32 * DPR, '#ff382d');
+    drawBar(leftX, y + 125 * DPR, 270 * DPR, 12 * DPR, game.damage, '#ff3241', 'DAMAGE');
 
-    text('SPEED', 5, y0 + 8, 7);
-    text(String(speed).padStart(3, '0'), 5, y0 + 24, 16, '#ff3e34');
-    text('km/h', 42, y0 + 32, 7);
-    text('GEAR', 5, y0 + 45, 7);
-    text(String(gear), 34, y0 + 44, 12, '#ff3e34');
+    const gaugeSize = clamp(112 * DPR, 90 * DPR, hudH * .86);
+    drawGauge(W * .34, y + hudH * .55, gaugeSize, game.rpm, 'TACH');
+    drawGauge(W * .53, y + hudH * .55, gaugeSize, clamp(game.speed / game.car.max, 0, 1), 'MPH/KMH');
 
-    // damage bar
-    text('DAMAGE', 64, y0 + 45, 7);
-    ctx.strokeStyle = '#cbd5df';
-    ctx.strokeRect(104, y0 + 46, 82, 5);
-    ctx.fillStyle = state.damage > 70 ? '#ff3e34' : '#e13d30';
-    ctx.fillRect(105, y0 + 47, Math.round(80 * clamp(state.damage / 100, 0, 1)), 3);
+    drawPixelText('LAP', W * .44, y + 34 * DPR, 14 * DPR, '#fff');
+    drawPixelText(`${Math.min(game.lap, game.track.laps)}/${game.track.laps}`, W * .49, y + 34 * DPR, 19 * DPR, '#50ff8d');
+    drawPixelText('TIME', W * .44, y + 67 * DPR, 14 * DPR, '#fff');
+    drawPixelText(fmtTime(game.raceTime), W * .49, y + 67 * DPR, 18 * DPR, '#ff4a35');
+    drawPixelText('COINS', W * .44, y + 100 * DPR, 14 * DPR, '#fff');
+    drawPixelText(String(game.raceCoins), W * .49, y + 100 * DPR, 18 * DPR, '#ffd338');
 
-    drawTachometer(245, y0 + 32, 30, rpm, 'TACH');
-    drawTachometer(382, y0 + 32, 33, rpm, 'MPH/KMH');
+    const turnX = W * .65;
+    drawPixelText('TURN', turnX, y + 64 * DPR, 11 * DPR, '#b8c6e9');
+    ctx.fillStyle = controls.left ? '#ffd338' : 'rgba(255,255,255,.18)';
+    triangle(turnX - 24 * DPR, y + 81 * DPR, 19 * DPR, -1);
+    ctx.fillStyle = controls.right ? '#ffd338' : 'rgba(255,255,255,.18)';
+    triangle(turnX + 38 * DPR, y + 81 * DPR, 19 * DPR, 1);
 
-    text('LAP', 206, y0 + 9, 7);
-    text(`${Math.min(state.lap, state.laps)}/${state.laps}`, 235, y0 + 8, 11, '#40ff75');
-    text('TIME', 206, y0 + 25, 7);
-    text(formatTime(state.raceTime), 235, y0 + 24, 10, '#ff3e34');
-    text('COINS', 206, y0 + 42, 7);
-    text(String(state.raceCoins), 235, y0 + 41, 10, COLORS.yellow);
+    const distX = W * .70;
+    const progress = ((game.pos % game.track.realLen) / game.track.realLen);
+    drawPixelText('DISTANCE', distX, y + 34 * DPR, 13 * DPR, '#fff');
+    drawBar(distX, y + 50 * DPR, W * .26, 12 * DPR, progress, '#ff3a2d');
+    drawPixelText(`${Math.floor(game.totalMeters)} m`, distX, y + 85 * DPR, 14 * DPR, '#fff');
+    drawPixelText('ODOMETER', distX, y + 112 * DPR, 11 * DPR, '#b8c6e9');
+    drawPixelText(`${((save.odometer + game.totalMeters) / 1000).toFixed(2)} km`, distX + 120 * DPR, y + 112 * DPR, 13 * DPR, '#ffd338');
 
-    // turn indicators
-    text('TURN', 305, y0 + 20, 6);
-    const seg = findSegment(state.position);
-    const turn = seg.curve;
-    drawArrow(297, y0 + 38, -1, input.left || turn < -.55);
-    drawArrow(327, y0 + 38, 1, input.right || turn > .55);
-
-    // distance / odometer
-    text('DISTANCE', 350, y0 + 8, 7);
-    ctx.strokeStyle = '#d6d6d6';
-    ctx.strokeRect(350, y0 + 18, 120, 4);
-    ctx.fillStyle = '#d73522';
-    ctx.fillRect(351, y0 + 19, Math.round(118 * ((state.lap - 1) * state.trackLength + state.position) / (state.trackLength * state.laps)), 2);
-    text(`${Math.round(state.position)} m`, 350, y0 + 28, 7);
-    text('ODOMETER', 350, y0 + 42, 7);
-    text(`${state.odometer.toFixed(2)} km`, 404, y0 + 40, 8, COLORS.yellow);
-
-    drawMiniMap(444, y0 + 10, 32, 42);
+    drawMiniMap(W - 150 * DPR, y + 22 * DPR, 132 * DPR, hudH - 38 * DPR);
   }
 
-  function drawTachometer(cx, cy, r, v, label) {
-    text(label, cx - r, cy - r - 9, 6);
-    ctx.strokeStyle = '#e8e8e8';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, Math.PI * .78, Math.PI * 2.20);
-    ctx.stroke();
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 8; i++) {
-      const a = Math.PI * (.78 + (2.20 - .78) * i / 8);
-      ctx.strokeStyle = i > 6 ? '#ff3e34' : '#e8e8e8';
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * (r - 5), cy + Math.sin(a) * (r - 5));
-      ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-      ctx.stroke();
+  function drawPixelText(text, x, y, size, color) {
+    ctx.font = `900 ${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(0,0,0,.65)';
+    ctx.fillText(text, x + 2 * DPR, y + 2 * DPR);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+  }
+
+  function drawBar(x, y, w, h, val, color, label) {
+    if (label) drawPixelText(label, x, y - 18 * DPR, 11 * DPR, '#fff');
+    ctx.strokeStyle = 'rgba(255,255,255,.7)';
+    ctx.lineWidth = 1 * DPR;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,.1)';
+    ctx.fillRect(x + 2 * DPR, y + 2 * DPR, w - 4 * DPR, h - 4 * DPR);
+    ctx.fillStyle = color;
+    ctx.fillRect(x + 2 * DPR, y + 2 * DPR, (w - 4 * DPR) * clamp(val, 0, 1), h - 4 * DPR);
+  }
+
+  function drawGauge(cx, cy, size, value, label) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (images.gauge) ctx.drawImage(images.gauge, -size / 2, -size / 2, size, size);
+    else {
+      ctx.strokeStyle = '#dfe4ea'; ctx.lineWidth = 4 * DPR; ctx.beginPath(); ctx.arc(0, 0, size*.42, Math.PI*.82, Math.PI*2.18); ctx.stroke();
     }
-    const a = Math.PI * (.78 + (2.20 - .78) * clamp(v, 0, 1));
-    ctx.strokeStyle = COLORS.yellow;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.cos(a) * (r - 8), cy + Math.sin(a) * (r - 8));
-    ctx.stroke();
+    const angle = lerp(-2.35, .85, clamp(value, 0, 1));
+    ctx.rotate(angle);
+    if (images.needle) ctx.drawImage(images.needle, -4 * DPR, -size * .44, 8 * DPR, size * .5);
+    else { ctx.strokeStyle = '#ff2a3a'; ctx.lineWidth = 3 * DPR; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0, -size*.38); ctx.stroke(); }
+    ctx.rotate(-angle);
     ctx.fillStyle = '#fff';
-    ctx.fillRect(cx - 2, cy - 2, 4, 4);
-    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, 5 * DPR, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    drawPixelText(label, cx - size * .42, cy - size * .58, 10 * DPR, '#fff');
   }
 
-  function drawArrow(x, y, dir, active) {
-    ctx.fillStyle = active ? COLORS.yellow : '#4b4b4b';
-    if (dir < 0) polygon([[x, y], [x + 12, y - 8], [x + 12, y + 8]], ctx.fillStyle);
-    else polygon([[x, y - 8], [x + 12, y], [x, y + 8]], ctx.fillStyle);
+  function triangle(x, y, s, dir) {
+    ctx.beginPath();
+    ctx.moveTo(x + dir * s, y);
+    ctx.lineTo(x - dir * s, y - s * .7);
+    ctx.lineTo(x - dir * s, y + s * .7);
+    ctx.closePath();
+    ctx.fill();
   }
 
   function drawMiniMap(x, y, w, h) {
-    ctx.fillStyle = '#082010';
-    ctx.fillRect(x - 3, y - 3, w + 6, h + 6);
-    ctx.strokeStyle = '#cfd8d8';
-    ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(9, 40, 22, .92)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,.75)';
+    ctx.lineWidth = 2 * DPR;
+    ctx.strokeRect(x, y, w, h);
+    const segs = game.track.segments;
+    ctx.save();
+    ctx.translate(x + w*.5, y + h*.5);
+    ctx.scale(w / 5, h / 5);
+    ctx.strokeStyle = '#d6e8e5';
+    ctx.lineWidth = .08;
     ctx.beginPath();
-    for (let i = 0; i < state.map.length; i++) {
-      const p = state.map[i];
-      const px = x + p.x * w;
-      const py = y + p.y * h;
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    let px = 0, py = -2;
+    ctx.moveTo(px, py);
+    for (let i = 0; i < segs.length; i += Math.ceil(segs.length / 90)) {
+      const a = i / segs.length * Math.PI * 2;
+      const c = segs[i].curve;
+      const r = 1.55 + c * .34;
+      px = Math.sin(a) * r;
+      py = -Math.cos(a) * r;
+      ctx.lineTo(px, py);
     }
+    ctx.closePath();
     ctx.stroke();
-    const idx = Math.floor(state.position / SEGMENT_LENGTH) % Math.max(1, state.map.length);
-    const me = state.map[idx] || { x: 0, y: 0 };
-    ctx.fillStyle = '#ff3e34';
-    ctx.fillRect(x + me.x * w - 2, y + me.y * h - 2, 4, 4);
+    const p = (game.pos % game.track.realLen) / game.track.realLen * Math.PI * 2;
+    ctx.fillStyle = '#ff303d';
+    ctx.fillRect(Math.sin(p)*1.55 - .09, -Math.cos(p)*1.55 - .09, .18, .18);
+    ctx.restore();
   }
 
-  function drawCountdown() {
-    const n = Math.ceil(state.countdown);
-    const label = n > 0 ? String(n) : 'GO!';
-    text(label, W / 2, 70, 40, state.countdown < .7 ? '#40ff75' : '#ffcf33', 'center');
+  function drawAttract(track) {
+    const fake = game.mode !== 'race';
+    const oldTrack = game.track;
+    const oldPos = game.pos;
+    if (fake) { game.track = selectedTrack(); game.pos += .65; }
+    const road = buildRoadCache();
+    drawRoad(road, selectedTrack());
+    if (fake) { game.track = oldTrack; game.pos = oldPos; }
+    drawPixelText('Q3 RETRO RALLY', W * .06, H * .16, Math.max(30 * DPR, W * .045), '#ffffff');
+    drawPixelText('выбери авто, трассу и жми СТАРТ', W * .06, H * .16 + 58 * DPR, Math.max(14 * DPR, W * .015), '#ffd338');
   }
 
+  let last = performance.now();
   function frame(now) {
-    const dt = Math.min(.05, (now - state.lastFrame) / 1000 || 0);
-    state.lastFrame = now;
+    const dtRaw = (now - last) / 1000;
+    last = now;
+    const dt = clamp(dtRaw, 0, 1/25);
     update(dt);
-    drawVisibleWorld();
-    if (state.running || document.getElementById('menu').classList.contains('open')) requestAnimationFrame(frame);
+    render();
+    requestAnimationFrame(frame);
   }
 
-  function renderMenu() {
-    const wallet = document.getElementById('walletCoins');
-    wallet.textContent = state.save.coins;
-    state.selectedCar = state.save.selectedCar || state.selectedCar;
-    state.selectedTrack = state.save.selectedTrack || state.selectedTrack;
-    state.selectedDifficulty = state.save.selectedDifficulty || state.selectedDifficulty;
-
-    const carsEl = document.getElementById('cars');
-    carsEl.innerHTML = '';
-    for (const car of CARS) {
-      const owned = state.save.owned.includes(car.id);
-      const selected = state.selectedCar === car.id;
-      const card = document.createElement('article');
-      card.className = `card ${selected ? 'selected' : ''} ${owned ? '' : 'locked'}`;
-      card.innerHTML = `
-        <h3>${car.name}</h3>
-        <p>${car.desc}</p>
-        ${statLine('Скорость', car.max / 350)}
-        ${statLine('Разгон', car.accel / 76)}
-        ${statLine('Руль', car.handling / 2.3)}
-        ${statLine('Сцепление', car.grip / 1.4)}
-        <button class="${owned ? '' : 'buy'}" ${(!owned && state.save.coins < car.cost) ? 'disabled' : ''}>${owned ? (selected ? 'Выбрано' : 'Выбрать') : `Купить • ${car.cost}`}</button>`;
-      card.querySelector('button').addEventListener('click', () => {
-        if (!owned) {
-          if (state.save.coins < car.cost) return;
-          state.save.coins -= car.cost;
-          state.save.owned.push(car.id);
-        }
-        state.selectedCar = car.id;
-        state.save.selectedCar = car.id;
-        saveGame();
-        renderMenu();
-      });
-      carsEl.appendChild(card);
-    }
-
-    const tracksEl = document.getElementById('tracks');
-    tracksEl.innerHTML = '';
-    for (const track of TRACKS) {
-      const selected = state.selectedTrack === track.id;
-      const bestEasy = Object.entries(state.save.best).filter(([k]) => k.startsWith(track.id)).map(([,v]) => v).sort((a,b)=>a-b)[0];
-      const card = document.createElement('article');
-      card.className = `card ${selected ? 'selected' : ''}`;
-      card.innerHTML = `<h3>${track.name}</h3><p>${track.desc}</p><p>Длина: <b>${track.lengthName}</b>${bestEasy ? `<br>Лучшее: <b>${formatTime(bestEasy)}</b>` : ''}</p><button>${selected ? 'Выбрано' : 'Выбрать'}</button>`;
-      card.querySelector('button').addEventListener('click', () => {
-        state.selectedTrack = track.id;
-        state.save.selectedTrack = track.id;
-        saveGame();
-        renderMenu();
-      });
-      tracksEl.appendChild(card);
-    }
-
-    const diffsEl = document.getElementById('difficulties');
-    diffsEl.innerHTML = '';
-    for (const diff of DIFFICULTIES) {
-      const selected = state.selectedDifficulty === diff.id;
-      const card = document.createElement('article');
-      card.className = `card ${selected ? 'selected' : ''}`;
-      card.innerHTML = `<h3>${diff.name}</h3><p>${diff.desc}</p><p>Множитель награды: <b>x${diff.reward}</b></p><button>${selected ? 'Выбрано' : 'Выбрать'}</button>`;
-      card.querySelector('button').addEventListener('click', () => {
-        state.selectedDifficulty = diff.id;
-        state.save.selectedDifficulty = diff.id;
-        saveGame();
-        renderMenu();
-      });
-      diffsEl.appendChild(card);
+  function initPwa() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
     }
   }
 
-  function statLine(name, value) {
-    return `<div class="stat"><span>${name}</span><span class="bar"><i style="width:${Math.round(clamp(value,0,1)*100)}%"></i></span></div>`;
-  }
-
-  function openMenu() {
-    state.paused = true;
-    renderMenu();
-    document.getElementById('menu').classList.add('open');
-    if (!state.running) requestAnimationFrame(frame);
-  }
-
-  function bindEvents() {
-    const setKey = (key, value) => {
-      if (['ArrowLeft', 'a', 'A', 'ф', 'Ф'].includes(key)) input.left = value;
-      if (['ArrowRight', 'd', 'D', 'в', 'В'].includes(key)) input.right = value;
-      if (['ArrowUp', 'w', 'W', 'ц', 'Ц'].includes(key)) input.gas = value;
-      if (['ArrowDown', 's', 'S', 'ы', 'Ы'].includes(key)) input.brake = value;
-    };
-    window.addEventListener('keydown', e => {
-      if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','w','W','a','A','s','S','d','D'].includes(e.key)) e.preventDefault();
-      if (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З') state.paused = !state.paused;
-      setKey(e.key, true);
-    }, { passive: false });
-    window.addEventListener('keyup', e => setKey(e.key, false));
-
-    document.getElementById('startBtn').addEventListener('click', startRace);
-    document.getElementById('pauseBtn').addEventListener('click', () => { if (state.running) state.paused = !state.paused; });
-    document.getElementById('menuBtn').addEventListener('click', openMenu);
-    document.getElementById('finishMenu').addEventListener('click', () => {
-      document.getElementById('finish').classList.remove('open');
-      openMenu();
-    });
-    document.getElementById('resetBtn').addEventListener('click', () => {
-      if (!confirm('Сбросить монеты, покупки и рекорды?')) return;
-      localStorage.removeItem(STORAGE_KEY);
-      state.save = loadSave();
-      renderMenu();
-    });
-
-    document.querySelectorAll('.touch-controls button').forEach(btn => {
-      const name = btn.dataset.control;
-      const map = { left: 'left', right: 'right', gas: 'gas', brake: 'brake' };
-      const prop = map[name];
-      const down = e => { e.preventDefault(); input[prop] = true; };
-      const up = e => { e.preventDefault(); input[prop] = false; };
-      btn.addEventListener('pointerdown', down);
-      btn.addEventListener('pointerup', up);
-      btn.addEventListener('pointercancel', up);
-      btn.addEventListener('pointerleave', up);
-    });
-
-    window.addEventListener('blur', () => { input.left = input.right = input.gas = input.brake = false; });
-  }
-
-  // Boot
-  state.selectedCar = state.save.selectedCar || 'starter';
-  state.selectedTrack = state.save.selectedTrack || 'classic';
-  state.selectedDifficulty = state.save.selectedDifficulty || 'normal';
-  buildTrack(byId(TRACKS, state.selectedTrack));
-  bindEvents();
-  renderMenu();
-  drawVisibleWorld();
+  loadImages().then(() => {
+    loadSounds();
+    buildMenu();
+    initPwa();
+    requestAnimationFrame(frame);
+  });
 })();
