@@ -157,7 +157,7 @@
     bestTimes: {},
     odometer: 0
   });
-  const storeKey = 'q3-html-retro-rally-v6';
+  const storeKey = 'q3-html-retro-rally-v7';
   let save = defaultSave();
   try {
     save = { ...defaultSave(), ...(JSON.parse(localStorage.getItem(storeKey) || '{}')) };
@@ -170,22 +170,52 @@
   }
 
   const controls = { gas: false, brake: false, left: false, right: false, handbrake: false };
-  const keyMap = {
-    ArrowUp: 'gas', KeyW: 'gas', KeyЦ: 'gas',
-    ArrowDown: 'brake', KeyS: 'brake', KeyЫ: 'brake',
-    ArrowLeft: 'left', KeyA: 'left', KeyФ: 'left',
-    ArrowRight: 'right', KeyD: 'right', KeyВ: 'right',
-    Space: 'handbrake'
+  const activeCodes = new Set();
+  const keyMapCode = {
+    ArrowUp: 'gas', KeyW: 'gas', Numpad8: 'gas',
+    ArrowDown: 'brake', KeyS: 'brake', Numpad5: 'brake', Numpad2: 'brake',
+    ArrowLeft: 'left', KeyA: 'left', Numpad4: 'left',
+    ArrowRight: 'right', KeyD: 'right', Numpad6: 'right',
+    Space: 'handbrake', ShiftLeft: 'handbrake', ShiftRight: 'handbrake'
   };
+  const keyMapKey = {
+    w: 'gas', ц: 'gas', W: 'gas', Ц: 'gas',
+    s: 'brake', ы: 'brake', S: 'brake', Ы: 'brake',
+    a: 'left', ф: 'left', A: 'left', Ф: 'left',
+    d: 'right', в: 'right', D: 'right', В: 'right',
+    ' ': 'handbrake'
+  };
+  function syncControls() {
+    controls.gas = controls.brake = controls.left = controls.right = controls.handbrake = false;
+    for (const code of activeCodes) {
+      const k = keyMapCode[code] || keyMapKey[code];
+      if (k && controls[k] !== undefined) controls[k] = true;
+    }
+  }
+  function controlFromEvent(e) {
+    return keyMapCode[e.code] || keyMapKey[e.key] || keyMapKey[String(e.key || '').toLowerCase()];
+  }
   addEventListener('keydown', (e) => {
-    const k = keyMap[e.code] || keyMap[e.key];
-    if (k) { controls[k] = true; e.preventDefault(); }
-    if (e.code === 'KeyP') togglePause();
+    const k = controlFromEvent(e);
+    if (k) {
+      activeCodes.add(e.code || e.key);
+      if (keyMapKey[e.key]) activeCodes.add(e.key);
+      syncControls();
+      game.controlFlash = .35;
+      e.preventDefault();
+    }
+    if (e.code === 'KeyP' || e.key?.toLowerCase?.() === 'p' || e.key?.toLowerCase?.() === 'з') togglePause();
   }, { passive: false });
   addEventListener('keyup', (e) => {
-    const k = keyMap[e.code] || keyMap[e.key];
-    if (k) { controls[k] = false; e.preventDefault(); }
+    const k = controlFromEvent(e);
+    if (k) {
+      activeCodes.delete(e.code || e.key);
+      activeCodes.delete(e.key);
+      syncControls();
+      e.preventDefault();
+    }
   }, { passive: false });
+  addEventListener('blur', () => { activeCodes.clear(); syncControls(); });
   document.querySelectorAll('[data-touch]').forEach((btn) => {
     const name = btn.dataset.touch;
     const set = (v) => { if (controls[name] !== undefined) controls[name] = v; };
@@ -244,7 +274,9 @@
     skidTimer: 0,
     lastBase: 0,
     scanShift: 0,
-    speedFx: 0
+    speedFx: 0,
+    cameraX: 0,
+    controlFlash: 0
   };
 
   function currentCar() { return CARS.find(c => c.id === save.selectedCar) || CARS[0]; }
@@ -389,6 +421,8 @@
     game.finishLock = 0;
     game.shake = 0;
     game.speedFx = 0;
+    game.cameraX = 0;
+    game.controlFlash = 0;
     buildCoins();
     buildTraffic();
     menu.classList.add('hidden');
@@ -460,22 +494,24 @@
     game.speed = clamp(game.speed + accel * dt, 0, game.maxSpeed * (offroad ? (car.id === 'raptor' ? .72 : .55) : 1));
 
     const input = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
-    const steerLag = controls.handbrake ? 4.6 : 3.2;
+    // v7: управление сделано как в старых аркадных гонках: машина реально смещается по полосе,
+    // а камера только немного догоняет её. Руль не должен быть ни «ватным», ни мгновенно резким.
+    const steerLag = input ? (controls.handbrake ? 8.5 : 7.2) : 10.5;
     game.steer = lerp(game.steer, input, 1 - Math.exp(-dt * steerLag));
 
-    // Главное изменение v6: машина НЕ рисуется отдельно от дороги. playerX — это положение машины внутри полотна.
-    // Камера смещает дорогу под машиной, а боковая скорость меняется постепенно, поэтому нет левитации и резких телепортов.
-    const steeringForce = car.turn * (0.48 + speedPct * .72) * (controls.handbrake ? 1.35 : 1) / Math.sqrt(car.mass);
-    const curvePush = seg.curve * (0.58 + speedPct * 1.4) * speedPct;
-    game.lateralV += game.steer * steeringForce * dt;
-    game.lateralV -= curvePush * dt;
-    game.lateralV *= Math.exp(-dt * (1.55 + traction * 2.55));
-    if (offroad) game.lateralV *= Math.exp(-dt * 2.4);
-    game.playerX += game.lateralV * dt * (0.72 + speedPct * .96);
+    const curvePush = seg.curve * speedPct * (0.50 + speedPct * 0.82);
+    const sidePower = car.turn * (0.72 + speedPct * 0.88) * (offroad ? 0.58 : 1) / Math.sqrt(car.mass);
+    const targetLatV = game.steer * sidePower * (controls.handbrake ? 1.18 : 1) - curvePush;
+    const response = (controls.handbrake ? 2.9 : 5.9) * clamp(traction, .25, 1.8);
+    game.lateralV = lerp(game.lateralV, targetLatV, 1 - Math.exp(-dt * response));
+    if (!input && Math.abs(game.steer) < .04) game.steer = 0;
+    if (offroad) game.lateralV *= Math.exp(-dt * 1.8);
+    game.playerX += game.lateralV * dt;
+    game.cameraX = lerp(game.cameraX, game.playerX, 1 - Math.exp(-dt * 2.2));
 
     if (Math.abs(game.playerX) > 1.42) {
       game.playerX = sign(game.playerX) * 1.42;
-      game.lateralV *= -.20;
+      game.lateralV *= -.28;
       game.damage = clamp(game.damage + dt * .055 * diff.damage, 0, 1);
       game.shake = Math.max(game.shake, .38);
       game.roadJolt = Math.max(game.roadJolt, .8);
@@ -501,7 +537,7 @@
       game.skidTimer -= dt;
       if (game.skidTimer <= 0) { sfx('skid', .16); game.skidTimer = .45; }
     }
-    game.carRoll = lerp(game.carRoll, clamp(game.lateralV * .35 + game.steer * .22, -1, 1), 1 - Math.exp(-dt * 4.6));
+    game.carRoll = lerp(game.carRoll, clamp(game.lateralV * .28 + game.steer * .34, -1, 1), 1 - Math.exp(-dt * 6.2));
     game.speedFx = lerp(game.speedFx, speedPct, 1 - Math.exp(-dt * 4.5));
     game.shake = Math.max(0, game.shake - dt * 1.8);
     game.roadJolt = Math.max(0, game.roadJolt - dt * 2.8);
@@ -689,7 +725,9 @@
   function project(worldX, z) {
     const scale = ROAD.cameraDepth / Math.max(1, z);
     const y = horizon + scale * (roadBottom - horizon);
-    const x = W / 2 + scale * (worldX - game.playerX * ROAD.roadWidth * .66) * W * .00055;
+    // Камера не прилипает к машине полностью: иначе кажется, что руль не работает.
+    const cameraWorld = (game.cameraX || 0) * ROAD.roadWidth * .28;
+    const x = W / 2 + scale * (worldX - cameraWorld) * W * .00055;
     const w = scale * W * 1.05;
     return { x, y, w, scale };
   }
@@ -847,7 +885,8 @@
   function drawPlayerCar() {
     const car = game.car;
     const sc = clamp(W / 1280, .72, 1.22) * DPR;
-    const carX = W / 2 + game.steer * 8 * DPR;
+    const laneShift = (game.playerX - (game.cameraX || 0) * .28) * W * .34;
+    const carX = clamp(W / 2 + laneShift + game.steer * 12 * DPR, 86 * DPR, W - 86 * DPR);
     const carY = roadBottom - 42 * DPR + Math.sin(game.position * .045) * game.roadJolt * 2 * DPR;
     ctx.save();
     ctx.translate(carX, carY);
