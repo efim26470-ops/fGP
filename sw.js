@@ -1,4 +1,4 @@
-const CACHE = 'q3-retro-rally-html-v4';
+const CACHE = 'q3-retro-rally-html-v8';
 const FILES = [
   './', './index.html', './styles.css', './game.js', './manifest.webmanifest', './icon.svg',
   './assets/hud/gauge.png', './assets/hud/needle.png', './assets/hud/arrow.png', './assets/hud/minimap_frame.png',
