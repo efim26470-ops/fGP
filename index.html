@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#070b14" />
-  <title>Q3 Retro Rally HTML v8</title>
+  <meta name="theme-color" content="#06090f" />
+  <title>Q3 Retro Rally HTML v9</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -21,9 +21,9 @@
   <section id="menu" class="menu-panel">
     <div class="menu-card hero">
       <div>
-        <p class="eyebrow">HTML / GitHub Pages / localStorage</p>
-        <h1>Q3 Retro Rally v8</h1>
-        <p class="lead">Стабильная версия: пересобрана проекция дороги, управление, скорость и отрисовка машин. Машина едет по полотну, дорога не ломается, машины и превью отображаются корректно.</p>
+        <p class="eyebrow">GitHub Pages • Canvas • localStorage</p>
+        <h1>Q3 Retro Rally v9</h1>
+        <p class="lead">Версия с заново собранной стабильной псевдо-3D дорогой: трасса всегда под машиной, без тряски экрана, управление плавное, скорость ощущается через разметку, объекты и масштаб.</p>
       </div>
       <div class="save-line">
         <span>Монеты: <b id="totalCoins">0</b></span>
@@ -34,7 +34,7 @@
     <div class="menu-card">
       <div class="section-title">
         <h2>Авто</h2>
-        <p>Каждая машина отличается массой, сцеплением, разгоном и рулём.</p>
+        <p>Превью берутся из загруженных Q3Rally-ассетов. Машины отличаются разгоном, максималкой, массой и рулём.</p>
       </div>
       <div id="cars" class="grid cars-grid"></div>
     </div>
@@ -42,7 +42,7 @@
     <div class="menu-card">
       <div class="section-title">
         <h2>Трасса</h2>
-        <p>У трасс разные повороты, прямые, сцепление и визуал.</p>
+        <p>Разные профили: длинные прямые, связки поворотов, скользкие ночные участки и раллийные дуги.</p>
       </div>
       <div id="tracks" class="grid tracks-grid"></div>
     </div>
@@ -50,7 +50,7 @@
     <div class="menu-card row-card">
       <div class="section-title tight">
         <h2>Сложность</h2>
-        <p>Влияет на трафик, штрафы за обочину и чувствительность повреждений.</p>
+        <p>Меняет трафик, урон, награду и сцепление.</p>
       </div>
       <div id="difficulty" class="difficulty"></div>
     </div>
@@ -58,9 +58,7 @@
     <div class="menu-card controls-card">
       <button id="startBtn" class="start">Старт</button>
       <button id="resetBtn" class="secondary">Сбросить прогресс</button>
-      <div class="help">
-        <b>Управление:</b> стрелки или WASD. Вперёд — газ, вниз/S — тормоз, влево/вправо — руль, Space — ручник/дрифт, P — пауза. На телефоне — экранные кнопки.
-      </div>
+      <div class="help"><b>Управление:</b> W/↑ газ, S/↓ тормоз, A/← и D/→ руль, Space ручник, P пауза. Русская раскладка поддерживается.</div>
     </div>
   </section>
 
@@ -77,6 +75,6 @@
     </div>
   </div>
 
-  <script src="game.js"></script>
+  <script src="game.js?v=9"></script>
 </body>
 </html>

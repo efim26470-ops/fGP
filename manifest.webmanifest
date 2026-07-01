@@ -1,12 +1,9 @@
 {
-  "name": "Q3 Retro Rally HTML",
+  "name": "Q3 Retro Rally HTML v9",
   "short_name": "Retro Rally",
-  "start_url": "./index.html",
+  "start_url": "./index.html?v=9",
   "display": "standalone",
-  "background_color": "#070b14",
-  "theme_color": "#070b14",
-  "orientation": "landscape",
-  "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
-  ]
+  "background_color": "#06090f",
+  "theme_color": "#06090f",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
 }
